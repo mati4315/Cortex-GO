@@ -61,6 +61,7 @@ type workerStatus struct {
 
 type workerService struct {
 	store     *eventStore
+	welcome   *welcomeService
 	startedAt string
 	probe     func(context.Context) obsStatus
 
@@ -95,6 +96,10 @@ func runWorker(address, dbPath, parentURL string) error {
 	}
 	defer store.Close()
 	service := newWorkerService(store, probeOBSFromEnvironment)
+	service.welcome, err = newWelcomeService(store, switchOBSSceneFromEnvironment)
+	if err != nil {
+		return fmt.Errorf("no se pudo preparar el módulo Bienvenidos y Banner: %w", err)
+	}
 	mux := http.NewServeMux()
 	service.registerRoutes(mux)
 	server := &http.Server{
@@ -108,6 +113,7 @@ func runWorker(address, dbPath, parentURL string) error {
 		return fmt.Errorf("no se pudo escuchar en la dirección interna: %w", err)
 	}
 	go service.watchOBS()
+	go service.welcome.run(service.stop)
 	if parentURL != "" {
 		go service.watchParent(parentURL)
 	}
@@ -143,7 +149,38 @@ func (s *workerService) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/restore", s.handleRestore)
 	mux.HandleFunc("POST /api/feeds/{id}/disconnect", s.handleFeedDisconnect)
 	mux.HandleFunc("POST /api/feeds/{id}/reconnect", s.handleFeedReconnect)
+	mux.HandleFunc("GET /api/modules/welcome/state", s.handleWelcomeState)
+	mux.HandleFunc("GET /api/modules/welcome/settings", s.welcome.handleSettings)
+	mux.HandleFunc("PUT /api/modules/welcome/settings", s.welcome.handleSettings)
+	mux.HandleFunc("POST /api/modules/welcome/timer", s.welcome.handleTimer)
+	mux.HandleFunc("POST /api/modules/welcome/obs/test", s.handleWelcomeOBSTest)
+	mux.HandleFunc("POST /api/modules/welcome/obs/transition", s.welcome.handleTransition)
+	mux.HandleFunc("POST /api/modules/welcome/upload/{kind}", s.welcome.handleUpload)
+	mux.HandleFunc("GET /api/modules/welcome/assets/{assetID}", s.welcome.handleAsset)
 	mux.HandleFunc("POST /internal/shutdown", s.handleShutdown)
+}
+
+func (s *workerService) handleWelcomeState(w http.ResponseWriter, _ *http.Request) {
+	settings, timer, lastTransition := s.welcome.snapshot()
+	s.mu.RLock()
+	obs := s.obs
+	s.mu.RUnlock()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"settings":       settings,
+		"timer":          timer,
+		"obs":            obs,
+		"lastTransition": lastTransition,
+	})
+}
+
+func (s *workerService) handleWelcomeOBSTest(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	status := s.probe(ctx)
+	s.mu.Lock()
+	s.obs = status
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"connected": status.State == "connected", "connecting": false, "state": status.State, "label": status.Label, "detail": status.Detail})
 }
 
 func (s *workerService) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -662,6 +699,10 @@ func (s *workerService) handleRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.Restore(ctx, temporaryPath); err != nil {
 		http.Error(w, "No se pudo restaurar el respaldo; la copia previa se conservó en backups\\"+fileName+": "+err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	if err := s.welcome.reload(); err != nil {
+		http.Error(w, "La base se restauró, pero no se pudo recargar la configuración del módulo", http.StatusServiceUnavailable)
 		return
 	}
 

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Overlay Empezamos Pronto</title>
+  
+  <link id="current-font" rel="stylesheet" href="/modules/bienvenidos/css/fonts.css">
+  
+  <!-- Overlay Stylesheet -->
+  <link rel="stylesheet" href="/modules/bienvenidos/css/overlay.css?v=1">
+</head>
+<body>
+
+  <!-- Background Layer -->
+  <div id="bg-container" class="bg-layer">
+    <div id="nebula-cloud-layer" aria-hidden="true"></div>
+    <!-- Canvas for Particles -->
+    <canvas id="particles-canvas"></canvas>
+    
+    <!-- Image Background -->
+    <div id="bg-image" class="bg-element"></div>
+    
+    <!-- Video Background -->
+    <video id="bg-video" class="bg-element" loop muted playsinline></video>
+    
+    <!-- Solid/Gradient color is applied directly to the container -->
+  </div>
+
+  <!-- Audio Player -->
+  <audio id="bg-audio" loop></audio>
+
+  <!-- Overlay Frame / Crop Marks -->
+  <div class="crop-marks">
+    <div class="crop-mark top-left"></div>
+    <div class="crop-mark top-right"></div>
+    <div class="crop-mark bottom-left"></div>
+    <div class="crop-mark bottom-right"></div>
+  </div>
+
+  <!-- Main Content Container (Scaled for 720x1280 OBS Source) -->
+  <main class="overlay-container">
+    
+    <!-- Live Pill Badge -->
+    <header class="badge-container">
+      <div id="live-badge" class="pulse-badge">
+        <span class="pulse-dot"></span>
+        <span id="badge-text">EN VIVO PRONTO</span>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <section class="content-area">
+      <!-- Logo Container -->
+      <div id="logo-wrapper" class="logo-wrapper">
+        <div class="logo-glow"></div>
+        <div class="logo-circle">
+          <img id="logo-img" src="" alt="Logo" class="hidden">
+          <div id="logo-placeholder" class="logo-placeholder">
+          <svg viewBox="0 0 48 32" aria-hidden="true" focusable="false"><path d="M12 5h24c5 0 8 3 9 8l2 10c1 5-5 8-9 4l-5-5H15l-5 5c-4 4-10 1-9-4l2-10c1-5 4-8 9-8Z" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="M13 11v10m-5-5h10m14-3h.1m6 6h.1" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- Header Texts -->
+      <div class="titles-container">
+        <p id="header-text" class="header-text">STREAM COMENZANDO</p>
+        <h1 id="title-text" class="main-title">Empezamos Pronto</h1>
+        <div class="separator-line">
+          <div class="separator-dot"></div>
+        </div>
+      </div>
+
+      <!-- Countdown Area -->
+      <div class="countdown-container">
+        <!-- Minutes -->
+        <div class="digits-group">
+          <div class="digit-box" id="min-tens">0</div>
+          <div class="digit-box" id="min-units">5</div>
+        </div>
+        
+        <!-- Colon -->
+        <span class="colon" id="countdown-colon">:</span>
+        
+        <!-- Seconds -->
+        <div class="digits-group">
+          <div class="digit-box" id="sec-tens">0</div>
+          <div class="digit-box" id="sec-units">0</div>
+        </div>
+      </div>
+      <div class="countdown-labels">
+        <span>MIN</span>
+        <span>SEG</span>
+      </div>
+
+      <!-- Progress Bar -->
+      <div class="progress-bar-container">
+        <div id="progress-bar" class="progress-bar"></div>
+      </div>
+
+      <!-- Subtitle -->
+      <div class="subtitle-container">
+        <p id="subtitle-text" class="subtitle">Prepara tu café, ya casi empezamos...</p>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- Floating Social Pills Background -->
+  <nav id="socials-list">
+    <!-- Rendered dynamically in overlay.js -->
+  </nav>
+
+  <script src="/modules/bienvenidos/js/socket-bridge.js"></script>
+  <script src="/modules/bienvenidos/js/overlay.js?v=1"></script>
+</body>
+</html>

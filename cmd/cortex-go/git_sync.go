@@ -20,6 +20,7 @@ import (
 const publicGitHubRepository = "mati4315/Cortex-GO"
 
 const maxGitPreviewBytes = 1 << 20
+const maxGitBinaryAssetBytes = 20 << 20
 
 type gitSyncManager struct {
 	root string
@@ -352,6 +353,7 @@ func (g *gitSyncManager) readWorkingFile(ctx context.Context, entry gitStatusEnt
 	if err != nil {
 		return nil, err
 	}
+	binaryAsset := publishableBinaryAsset(entry.Path)
 	info, err := os.Lstat(fullPath)
 	if errors.Is(err, os.ErrNotExist) && strings.Contains(entry.Status, "D") {
 		content, showErr := g.run(ctx, "show", "HEAD:"+entry.Path)
@@ -359,8 +361,12 @@ func (g *gitSyncManager) readWorkingFile(ctx context.Context, entry gitStatusEnt
 			return nil, errors.New("no se pudo leer el archivo eliminado para revisarlo")
 		}
 		deletedContent := []byte(content)
-		if len(deletedContent) > maxGitPreviewBytes || !utf8.Valid(deletedContent) || bytes.IndexByte(deletedContent, 0) >= 0 {
-			return nil, errors.New("el archivo eliminado no se puede mostrar como texto dentro de la revisión")
+		maxSize := maxGitPreviewBytes
+		if binaryAsset {
+			maxSize = maxGitBinaryAssetBytes
+		}
+		if len(deletedContent) > maxSize || (!binaryAsset && (!utf8.Valid(deletedContent) || bytes.IndexByte(deletedContent, 0) >= 0)) {
+			return nil, errors.New("el archivo eliminado supera el límite o no se puede revisar de forma segura")
 		}
 		return deletedContent, nil
 	}
@@ -370,20 +376,28 @@ func (g *gitSyncManager) readWorkingFile(ctx context.Context, entry gitStatusEnt
 	if info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
 		return nil, errors.New("no se publican vínculos ni carpetas desde este atajo")
 	}
-	if info.Size() > maxGitPreviewBytes {
-		return nil, errors.New("el archivo supera el límite de 1 MiB para revisión")
+	maxSize := int64(maxGitPreviewBytes)
+	if binaryAsset {
+		maxSize = maxGitBinaryAssetBytes
+	}
+	if info.Size() > maxSize {
+		return nil, errors.New("el archivo supera el límite permitido para revisión")
 	}
 	content, err := os.ReadFile(fullPath)
 	if err != nil {
 		return nil, errors.New("no se pudo leer uno de los archivos modificados")
 	}
-	if !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
+	if !binaryAsset && (!utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0) {
 		return nil, errors.New("no se publican archivos binarios desde este atajo")
 	}
 	return content, nil
 }
 
 func (g *gitSyncManager) fileDiff(ctx context.Context, entry gitStatusEntry, content []byte) (string, error) {
+	if publishableBinaryAsset(entry.Path) {
+		digest := sha256.Sum256(content)
+		return fmt.Sprintf("Binary asset review\nPath: %s\nStatus: %s\nSize: %d bytes\nSHA-256: %x\n", entry.Path, entry.Status, len(content), digest), nil
+	}
 	if strings.Contains(entry.Status, "D") {
 		oldLines := strings.SplitAfter(string(content), "\n")
 		var diff strings.Builder
@@ -487,6 +501,20 @@ func publishablePath(path string) bool {
 			"cmd/cortex-go/web/icons/icon-512.png":
 			return true
 		}
+		if strings.HasPrefix(clean, "cmd/cortex-go/web/welcome/") {
+			if publishableBinaryAsset(clean) {
+				return true
+			}
+			if strings.HasPrefix(clean, "cmd/cortex-go/web/welcome/fonts/") && strings.EqualFold(filepath.Ext(clean), ".txt") {
+				return true
+			}
+			switch strings.ToLower(filepath.Ext(clean)) {
+			case ".html", ".css", ".js":
+				return true
+			default:
+				return false
+			}
+		}
 		if strings.HasPrefix(clean, "cmd/cortex-go/") {
 			extension := strings.ToLower(filepath.Ext(clean))
 			return extension == ".go"
@@ -498,6 +526,17 @@ func publishablePath(path string) bool {
 		return name == "README.md" || extension == ".go" || extension == ".mod" || extension == ".sum"
 	}
 	return strings.HasPrefix(clean, "docs/") && strings.EqualFold(filepath.Ext(clean), ".md")
+}
+
+func publishableBinaryAsset(path string) bool {
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
+	if strings.HasPrefix(clean, "cmd/cortex-go/web/welcome/images/") {
+		return strings.EqualFold(filepath.Ext(clean), ".png")
+	}
+	if strings.HasPrefix(clean, "cmd/cortex-go/web/welcome/fonts/") {
+		return strings.EqualFold(filepath.Ext(clean), ".woff2")
+	}
+	return false
 }
 
 func safeRepositoryPath(root, path string) (string, error) {

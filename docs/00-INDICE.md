@@ -2,8 +2,8 @@
 
 **Fecha de actualización:** 13 de noviembre de 2026 (Australia/Brisbane)
 **Proyecto nuevo:** Cortex Go  
-**Estado general:** la base Go está publicada y desplegada en el equipo disponible, con PWA, lanzador de recuperación, SQLite versionada y API de eventos. La PC habitual está apagada; su traslado y la aceptación de Facebook real requieren que vuelva a estar disponible. El proyecto se crea desde cero y no porta código del Cortex anterior. SocialStream Ninja queda excluido; los demás módulos continúan en alcance.
-**Límite vigente:** el propietario autorizó terminar la base. Las sesiones reales de Facebook requieren autenticación manual; no se importaron datos antiguos, no se modificó el Cortex anterior ni se cambiaron escenas de OBS.
+**Estado general:** la base Go está publicada y desplegada en el equipo disponible, con PWA, lanzador de recuperación, SQLite versionada y API de eventos. El módulo Bienvenidos y Banner está integrado; su aceptación visual con OBS requiere la computadora que ejecuta OBS. La PC habitual está apagada; su eventual traslado y la aceptación de Facebook real también esperan que vuelva a estar disponible. SocialStream Ninja queda excluido; los demás módulos continúan en alcance.
+**Límite vigente:** no se importaron configuraciones privadas, perfiles, sesiones ni medios personales del Cortex anterior y no se modificó esa instalación. Las sesiones reales de Facebook requieren autenticación manual. La transición OBS del nuevo módulo es local y opcional; empieza desactivada.
 
 ## Orden de lectura
 
@@ -22,6 +22,7 @@
 13. [12 — Sincronización entre la PC y la notebook](12-SINCRONIZACION-ENTRE-PC.md)
 14. [13 — Guía para capturar comentarios de dos directos de Facebook](13-GUIA-CAPTURA-COMENTARIOS-FACEBOOK.md)
 15. [14 — Estado de la base operativa](14-BASE-OPERATIVA.md)
+16. [15 — Módulo Bienvenidos y Banner](15-MODULO-BIENVENIDOS-Y-BANNER.md)
 
 ## Estado de los documentos
 
@@ -42,10 +43,11 @@
 | 12-SINCRONIZACION-ENTRE-PC.md | Actualizado al host disponible | Una sola instancia mantiene la base activa; acceso remoto por Tailscale. No sincronizar SQLite activa; copias cifradas y Syncthing siguen pendientes y optativos. |
 | 13-GUIA-CAPTURA-COMENTARIOS-FACEBOOK.md | Captura prototipada; validación manual pendiente | El [prototipo de dos perfiles](../experiments/facebook-browser-poc/README.md) envía eventos nuevos al API local; faltan login/2FA y aceptación en la PC principal. |
 | 14-BASE-OPERATIVA.md | Base publicada y desplegada | Resume el despliegue y las comprobaciones realizadas; la autenticación de Facebook y aceptación de la PC habitual quedan pendientes. |
+| 15-MODULO-BIENVENIDOS-Y-BANNER.md | Integrado en Go | URLs, controles, persistencia SQLite v2, OBS local opcional y validación visual pendiente. |
 
 ## Proyecto y publicación
 
-- El proyecto se reconstruye desde cero en Go. Las rutas de las instalaciones locales se omiten de esta copia pública.
+- El servidor y persistencia se reconstruyen en Go. Para preservar la fidelidad, Bienvenidos y Banner adapta hojas de estilo, scripts de overlay y recursos gráficos del módulo viejo; `.env`, configuraciones, cuentas, sesiones y medios personales quedan fuera. Las rutas de las instalaciones locales se omiten de esta copia pública.
 - El propietario decidió mantener público el remoto de GitHub; se publican solo código y documentación revisados, sin bases, claves, datos privados ni capturas personales.
 - El primer commit limpio ya se publicó en la rama `main`. Las capturas y rutas locales quedan fuera del repositorio. Revisar [el plan de sincronización](12-SINCRONIZACION-ENTRE-PC.md).
 - El Cortex anterior permanece separado y sin cambios.

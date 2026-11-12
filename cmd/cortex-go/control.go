@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 )
@@ -51,6 +53,19 @@ func newControlServer(manager *processSupervisor, shutdown func()) http.Handler 
 	mux.HandleFunc("POST /api/shutdown", control.handleShutdown)
 	mux.HandleFunc("GET /api/git/preview", control.handleGitPreview)
 	mux.HandleFunc("POST /api/git/publish", control.handleGitPublish)
+	mux.HandleFunc("GET /api/modules/welcome/", control.proxy)
+	mux.HandleFunc("PUT /api/modules/welcome/", control.proxy)
+	mux.HandleFunc("POST /api/modules/welcome/", control.proxy)
+	mux.HandleFunc("GET /modules/bienvenidos/admin", func(w http.ResponseWriter, r *http.Request) {
+		serveWelcomePage(w, r, "admin.html")
+	})
+	mux.HandleFunc("GET /modules/bienvenidos/starting-soon", func(w http.ResponseWriter, r *http.Request) {
+		serveWelcomePage(w, r, "starting-soon.html")
+	})
+	mux.HandleFunc("GET /modules/bienvenidos/banner", func(w http.ResponseWriter, r *http.Request) {
+		serveWelcomePage(w, r, "banner.html")
+	})
+	mux.HandleFunc("GET /modules/bienvenidos/{resource...}", control.serveWelcomeAsset)
 	mux.HandleFunc("GET /manifest.webmanifest", func(w http.ResponseWriter, r *http.Request) {
 		serveWebAsset(w, r, "web/manifest.webmanifest", "application/manifest+json; charset=utf-8", "no-cache")
 	})
@@ -68,7 +83,7 @@ func newControlServer(manager *processSupervisor, shutdown func()) http.Handler 
 		w.Header().Set("X-Cortex-Go-Control-Plane", "1")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; frame-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'")
 		w.Header().Set("Cache-Control", "no-store")
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && !sameOrigin(r) {
 			http.Error(w, "La solicitud del navegador no tiene el mismo origen que Cortex Go", http.StatusForbidden)
@@ -76,6 +91,53 @@ func newControlServer(manager *processSupervisor, shutdown func()) http.Handler 
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+func serveWelcomePage(w http.ResponseWriter, r *http.Request, file string) {
+	serveWelcomeWebFile(w, r, "web/welcome/"+file)
+}
+
+func (c *controlServer) serveWelcomeAsset(w http.ResponseWriter, r *http.Request) {
+	resource := path.Clean("/" + r.PathValue("resource"))
+	resource = strings.TrimPrefix(resource, "/")
+	if resource == "" || resource == "." || strings.HasPrefix(resource, "../") || strings.Contains(resource, "\\") {
+		http.NotFound(w, r)
+		return
+	}
+	if !strings.HasPrefix(resource, "css/") && !strings.HasPrefix(resource, "js/") && !strings.HasPrefix(resource, "images/") && !strings.HasPrefix(resource, "fonts/") {
+		http.NotFound(w, r)
+		return
+	}
+	serveWelcomeWebFile(w, r, "web/welcome/"+resource)
+}
+
+func serveWelcomeWebFile(w http.ResponseWriter, r *http.Request, file string) {
+	content, err := webFiles.ReadFile(file)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	contentType := mime.TypeByExtension(path.Ext(file))
+	if contentType == "" {
+		switch path.Ext(file) {
+		case ".html":
+			contentType = "text/html; charset=utf-8"
+		case ".css":
+			contentType = "text/css; charset=utf-8"
+		case ".js":
+			contentType = "text/javascript; charset=utf-8"
+		case ".woff2":
+			contentType = "font/woff2"
+		default:
+			contentType = "application/octet-stream"
+		}
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(content)
+	}
 }
 
 func (c *controlServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -150,9 +212,15 @@ func (c *controlServer) proxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No se pudo preparar la acción para el servidor interno", http.StatusBadRequest)
 		return
 	}
-	request.Header.Set("Content-Type", r.Header.Get("Content-Type"))
+	for _, header := range []string{"Content-Type", "Accept", "Range", "If-Range", "If-None-Match", "If-Modified-Since"} {
+		if value := r.Header.Get(header); value != "" {
+			request.Header.Set(header, value)
+		}
+	}
 	client := c.client
-	if r.URL.Path == "/api/backup" || r.URL.Path == "/api/restore" {
+	if r.URL.Path == "/api/backup" || r.URL.Path == "/api/restore" || strings.HasPrefix(r.URL.Path, "/api/modules/welcome/upload/") {
+		client = &http.Client{Timeout: 2 * time.Minute}
+	} else if strings.HasPrefix(r.URL.Path, "/api/modules/welcome/assets/") {
 		client = &http.Client{Timeout: 2 * time.Minute}
 	}
 	response, err := client.Do(request)
@@ -161,13 +229,13 @@ func (c *controlServer) proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer response.Body.Close()
-	for _, header := range []string{"Content-Type"} {
+	for _, header := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Cache-Control", "ETag", "Last-Modified"} {
 		if value := response.Header.Get(header); value != "" {
 			w.Header().Set(header, value)
 		}
 	}
 	w.WriteHeader(response.StatusCode)
-	_, _ = io.Copy(w, io.LimitReader(response.Body, 1<<20))
+	_, _ = io.Copy(w, response.Body)
 }
 
 func (c *controlServer) handleRestart(w http.ResponseWriter, _ *http.Request) {

@@ -9,7 +9,7 @@
 - Mantener una sola instancia escribiendo la base SQLite. Cuando la PC habitual esté disponible, cualquier traslado debe usar un respaldo verificado y detener primero el host actual.
 - Los nombres y textos de Facebook se guardan en la base activa hasta que el usuario los borre manualmente.
 - Borrar comentarios del historial elimina las filas de la base activa. Los respaldos son copias independientes: pueden conservar comentarios borrados, no están cifrados y deben eliminarse manualmente cuando corresponda.
-- No se importan datos, perfiles, sesiones ni código del Cortex anterior. SocialStream Ninja queda excluido; las otras capacidades siguen en el plan de módulos.
+- No se importaron `.env`, perfiles, sesiones, configuraciones ni datos del Cortex anterior. El diseño del módulo Bienvenidos y Banner se adaptó desde sus recursos públicos; los demás módulos siguen en el plan.
 
 ## Implementado en el repositorio
 
@@ -19,7 +19,7 @@ El ejecutable arranca un lanzador oculto que inicia y supervisa el servidor loca
 
 ### API y datos
 
-El panel escucha en `127.0.0.1:17845`; el servidor interno también usa loopback. La versión 1 crea el registro general `events` y migra transaccionalmente los eventos sintéticos anteriores. Cada evento conserva origen, cuenta, directo, ID externo cuando está disponible, autor, texto, hora original, hora de captura y clave de deduplicación. El índice evita repetir un evento dentro de su origen.
+El panel escucha en `127.0.0.1:17845`; el servidor interno también usa loopback. La versión 1 crea el registro general `events` y migra transaccionalmente los eventos sintéticos anteriores. La versión 2 crea almacenamiento SQLite de módulos y archivos. Cada evento conserva origen, cuenta, directo, ID externo cuando está disponible, autor, texto, hora original, hora de captura y clave de deduplicación. El índice evita repetir un evento dentro de su origen.
 
 El panel permite consultar el historial, borrar una fila o todo el historial activo y ver el estado de las dos cuentas sin exponer nombres/textos en métricas o logs técnicos. `POST /api/events` acepta capturas; `POST /api/feeds/{id}/status` actualiza las métricas de la captura; las rutas `DELETE /api/events` y `DELETE /api/events/{id}` borran filas de la base activa.
 
@@ -37,7 +37,11 @@ Es una prueba externa, no la integración final en una ventana Cortex. No compru
 
 ### OBS y otros módulos
 
-OBS sigue en modo de solo lectura. No se cambian escenas ni se ejecutan acciones. Spotify, Rulo, sorteos y los demás módulos aún no están integrados.
+El panel central consulta OBS sin enviar órdenes. Bienvenidos y Banner incluye una acción limitada para cambiar a una escena local: se ejecuta al solicitarla manualmente o al llegar el contador a cero solo si la opción automática quedó activada. El cambio automático empieza apagado. Spotify, Rulo, sorteos y los demás módulos aún no están integrados.
+
+### Bienvenidos y Banner
+
+El módulo está integrado en Go y usa el esquema SQLite v2. El panel, overlay vertical y banner social se sirven en el mismo origen de Cortex. Su estado de configuración, temporizador y archivos multimedia se incluyen en los respaldos SQLite. Consulta [la guía del módulo](15-MODULO-BIENVENIDOS-Y-BANNER.md) para las URLs, controles, límites de archivos y requisitos OBS.
 
 ## Despliegue y comprobaciones
 
@@ -49,6 +53,7 @@ El núcleo y el prototipo Facebook compilaron después de los últimos cambios. 
 2. Cuando la PC habitual esté encendida, decidir si se traslada la instancia. Verificar el respaldo, detener el host actual y arrancar solo una instancia sobre la base elegida.
 3. Autenticar manualmente las dos cuentas; comprobar identidad, 2FA, aislamiento, persistencia de sesión, detección de comentarios nuevos y deduplicación. No ejecutar simultáneamente el Cortex anterior sobre las mismas cuentas.
 4. Probar restauración con datos ficticios y decidir cómo cifrar los respaldos.
-5. Continuar con la integración de OBS, Spotify, Rulo y demás módulos según prioridad; OBS permanece de solo lectura.
+5. Validar manualmente el overlay y la fuente de navegador en la PC que ejecuta OBS; la notebook puede abrir el panel por Tailscale, pero no tiene OBS local.
+6. Continuar con Spotify, Rulo, sorteos y los demás módulos según prioridad.
 
 La base ya está publicada y desplegada para continuar el proyecto. La aceptación con sesiones reales y el eventual traslado a la PC habitual quedan pendientes. El Cortex anterior permanece sin cambios.

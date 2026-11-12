@@ -34,7 +34,7 @@ type capturedEvent struct {
 	DedupKey   string
 }
 
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
 
 type eventStore struct {
 	db   *sql.DB
@@ -129,6 +129,36 @@ func migrateEventSchema(db *sql.DB) error {
 			}
 		}
 		if _, err := tx.Exec(`INSERT INTO schema_migrations(version, applied_at) VALUES(1, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		version = 1
+	}
+	if version < 2 {
+		for _, statement := range []string{
+			`CREATE TABLE IF NOT EXISTS module_settings (
+				module_id TEXT PRIMARY KEY,
+				settings_json TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)`,
+			`CREATE TABLE IF NOT EXISTS module_runtime (
+				module_id TEXT PRIMARY KEY,
+				runtime_json TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)`,
+			`CREATE TABLE IF NOT EXISTS module_assets (
+				asset_id TEXT PRIMARY KEY,
+				content_type TEXT NOT NULL,
+				original_name TEXT NOT NULL,
+				byte_size INTEGER NOT NULL,
+				content BLOB NOT NULL,
+				uploaded_at TEXT NOT NULL
+			)`,
+		} {
+			if _, err := tx.Exec(statement); err != nil {
+				return fmt.Errorf("crear almacenamiento de módulos: %w", err)
+			}
+		}
+		if _, err := tx.Exec(`INSERT INTO schema_migrations(version, applied_at) VALUES(2, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 	}
