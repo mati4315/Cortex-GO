@@ -102,14 +102,14 @@ body { position: relative; }
 }
 #nebula-cloud-layer.active { opacity: 1; }
 #nebula-cloud-layer.active::before {
-  animation: nebula-cyan-drift 86s ease-in-out infinite alternate,
-    nebula-cyan-breathe 19s ease-in-out infinite alternate;
-  animation-delay: -17s, -6s;
+  animation: nebula-cyan-drift 54s ease-in-out infinite,
+    nebula-cyan-breathe 18s ease-in-out infinite;
+  animation-delay: -13s, -5s;
 }
 #nebula-cloud-layer.active::after {
-  animation: nebula-violet-drift 112s ease-in-out infinite alternate,
-    nebula-violet-breathe 25s ease-in-out infinite alternate;
-  animation-delay: -43s, -14s;
+  animation: nebula-violet-drift 68s ease-in-out infinite,
+    nebula-violet-breathe 22s ease-in-out infinite;
+  animation-delay: -31s, -9s;
 }
 @media (orientation: portrait) {
   #nebula-cloud-layer::before,
@@ -400,20 +400,20 @@ body { position: relative; }
   100% { transform: translateY(-110%) scale(var(--float-scale, .9)); opacity: 0; }
 }
 @keyframes nebula-cyan-drift {
-  from { transform: scale(1.04) translate3d(-.35%, .2%, 0); }
-  to { transform: scale(1.08) translate3d(.3%, -.2%, 0); }
+  0%, 100% { transform: scale(1.045) translate3d(-.55%, .25%, 0); }
+  50% { transform: scale(1.085) translate3d(.45%, -.25%, 0); }
 }
 @keyframes nebula-violet-drift {
-  from { transform: scale(1.06) translate3d(.28%, -.15%, 0); }
-  to { transform: scale(1.1) translate3d(-.32%, .22%, 0); }
+  0%, 100% { transform: scale(1.055) translate3d(.5%, -.2%, 0); }
+  50% { transform: scale(1.095) translate3d(-.45%, .28%, 0); }
 }
 @keyframes nebula-cyan-breathe {
-  from { opacity: .22; }
-  to { opacity: .36; }
+  0%, 100% { opacity: .25; }
+  50% { opacity: .4; }
 }
 @keyframes nebula-violet-breathe {
-  from { opacity: .18; }
-  to { opacity: .32; }
+  0%, 100% { opacity: .22; }
+  50% { opacity: .36; }
 }
 @keyframes logo-aura { to { transform: rotate(360deg); } }
 @keyframes star-drift { to { transform: translate3d(1.4%, -1%, 0) scale(1.035); opacity: .9; } }
@@ -452,6 +452,4 @@ body.intro-active .subtitle-container { animation: intro-up .7s ease .62s both; 
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
   /* OBS may request reduced motion; keep the subtle social backdrop moving so labels never stick to the top. */
   .social-pill { animation-duration: var(--float-duration, 22s) !important; animation-iteration-count: infinite !important; }
-  #nebula-cloud-layer.active::before { animation-duration: 86s, 19s !important; animation-iteration-count: infinite, infinite !important; }
-  #nebula-cloud-layer.active::after { animation-duration: 112s, 25s !important; animation-iteration-count: infinite, infinite !important; }
 }
