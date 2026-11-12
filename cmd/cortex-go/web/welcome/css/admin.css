@@ -765,11 +765,11 @@ input[type="range"]::-webkit-slider-thumb:hover {
 /* Layout Grid general spacing */
 .grid-layout {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1-fraction));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
   gap: 25px;
 }
 
-@media (min-width: 850px) {
+@media (min-width: 1080px) {
   .grid-layout {
     grid-template-columns: 1fr 1fr;
   }
@@ -1244,5 +1244,343 @@ i[class^="fa-"], i[class*=" fa-"] { font-family: Inter, "Segoe UI Symbol", sans-
 .fa-network-wired::before { content: "⌁"; }
 .fa-circle-info::before { content: "i"; }
 .fa-arrow-right-to-bracket::before { content: "→"; }
+
+/* Mobile admin layout: keep controls reachable and let the active panel use the full width. */
+@media (max-width: 780px) {
+  body {
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .admin-wrapper {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .sidebar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand status"
+      "nav nav"
+      "links links";
+    align-items: center;
+    gap: 9px 10px;
+    width: 100%;
+    flex: 0 0 auto;
+    padding: calc(10px + env(safe-area-inset-top, 0px)) 14px 10px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-color);
+    justify-content: stretch;
+  }
+
+  .brand {
+    grid-area: brand;
+    min-width: 0;
+    gap: 9px;
+    margin: 0;
+    padding: 0;
+  }
+
+  .brand-icon {
+    flex: 0 0 auto;
+    font-size: 21px;
+  }
+
+  .brand h2 {
+    overflow: hidden;
+    font-size: clamp(16px, 4.5vw, 19px);
+    letter-spacing: 0.04em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .connection-status {
+    grid-area: status;
+    gap: 7px;
+    padding: 8px 9px;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+
+  .status-indicator {
+    flex: 0 0 8px;
+  }
+
+  .nav-menu {
+    grid-area: nav;
+    width: 100%;
+    min-width: 0;
+    flex: 0 0 auto;
+    flex-direction: row;
+    gap: 7px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 0 4px;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .nav-btn {
+    min-height: 44px;
+    flex: 0 0 auto;
+    gap: 8px;
+    padding: 9px 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+
+  .nav-btn i {
+    width: 18px;
+    flex: 0 0 18px;
+    font-size: 16px;
+  }
+
+  .overlay-link-container {
+    grid-area: links;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 0;
+  }
+
+  .overlay-link {
+    min-width: 0;
+    min-height: 44px;
+    justify-content: center;
+    padding: 9px 10px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .main-content {
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 22px 16px calc(28px + env(safe-area-inset-bottom, 0px));
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tab-content {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .section-header {
+    margin-bottom: 20px;
+  }
+
+  .section-header h1 {
+    font-size: clamp(1.5rem, 7vw, 1.85rem);
+    line-height: 1.2;
+  }
+
+  .section-header p {
+    font-size: 14px;
+  }
+
+  .grid-layout,
+  .banner-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .card {
+    min-width: 0;
+    margin-bottom: 16px;
+    padding: 18px;
+    border-radius: 14px;
+  }
+
+  .card-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 18px;
+    padding-bottom: 12px;
+  }
+
+  .timer-display-box {
+    max-width: 100%;
+    margin: 12px 0 22px;
+    padding: 0.15em 0.4em;
+    font-size: clamp(3rem, 14vw, 4.25rem);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+
+  .timer-action-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .timer-action-buttons .btn {
+    min-width: 0;
+    min-height: 46px;
+    padding: 10px 8px;
+    font-size: 13px;
+  }
+
+  .timer-action-buttons .btn:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .quick-timer-adjustments .btn-group {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .quick-timer-adjustments .btn-group .btn,
+  .sub-tab-btn,
+  .banner-actions-row .btn {
+    min-height: 44px;
+  }
+
+  .quick-timer-adjustments .btn-group .btn {
+    padding: 10px 8px;
+  }
+
+  .form-grid {
+    gap: 14px;
+  }
+
+  .form-grid .col-6 {
+    width: 100%;
+  }
+
+  input[type="text"],
+  input[type="number"],
+  select {
+    min-width: 0;
+    font-size: 16px;
+  }
+
+  .social-input-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 44px;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .social-input-row select {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .social-input-row input {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .social-input-row .btn-remove-row {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .color-picker-wrapper {
+    min-width: 0;
+  }
+
+  .color-picker-wrapper input[type="text"] {
+    width: 0;
+    min-width: 0;
+  }
+
+  .tabs-sub {
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .sub-tab-btn {
+    flex: 0 0 auto;
+  }
+
+  .upload-area {
+    padding: 22px 14px;
+  }
+
+  .banner-editor-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .banner-preview-card {
+    position: static;
+  }
+
+  .banner-preview-frame,
+  .banner-preview-frame iframe {
+    width: 100%;
+    min-height: 280px;
+    max-height: 360px;
+  }
+
+  #form-socials > div[style*="display: flex"] {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px !important;
+  }
+
+  #form-socials > div[style*="display: flex"] .btn {
+    width: 100%;
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 380px) {
+  .sidebar {
+    column-gap: 6px;
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .brand {
+    gap: 7px;
+  }
+
+  .brand h2 {
+    font-size: 16px;
+  }
+
+  .connection-status {
+    gap: 6px;
+    padding: 7px;
+    font-size: 9px;
+    letter-spacing: 0.02em;
+  }
+
+  .nav-btn {
+    padding-right: 10px;
+    padding-left: 10px;
+    font-size: 13px;
+  }
+
+  .overlay-link {
+    padding-right: 8px;
+    padding-left: 8px;
+    font-size: 12px;
+  }
+
+  .main-content {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .card {
+    padding: 15px;
+  }
+}
 .fa-shuffle::before { content: "⇄"; }
 .fa-rotate-left::before { content: "↶"; }
