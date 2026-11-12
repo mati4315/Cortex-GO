@@ -15,7 +15,7 @@
 
 ### Arranque y recuperación
 
-El ejecutable arranca un lanzador oculto que inicia y supervisa el servidor local. Si el proceso termina con error, el lanzador registra el motivo y hace hasta cinco reintentos con espera limitada. Un cierre normal desde el panel cierra ambos procesos. En el host desplegado, un acceso directo de inicio por usuario ejecuta Cortex al iniciar sesión en Windows; no se instala como servicio y esta configuración local no se distribuye con el repositorio.
+El ejecutable arranca un lanzador oculto que inicia y supervisa el servidor local. Si el proceso termina con error, el lanzador registra el motivo y hace hasta cinco reintentos con espera limitada. Un cierre normal desde el panel cierra ambos procesos. El panel permite habilitar o deshabilitar un acceso directo en la carpeta Inicio del usuario de Windows. El ajuste se aplica al próximo inicio de sesión, no cierra la instancia actual y no instala un servicio.
 
 ### API y datos
 

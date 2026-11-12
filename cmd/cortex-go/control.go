@@ -32,6 +32,8 @@ func newControlServer(manager *processSupervisor, shutdown func()) http.Handler 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", control.handleHealth)
 	mux.HandleFunc("GET /api/status", control.handleStatus)
+	mux.HandleFunc("GET /api/settings/startup", control.handleStartupSettings)
+	mux.HandleFunc("POST /api/settings/startup", control.handleStartupSettings)
 	mux.HandleFunc("GET /api/events", control.proxy)
 	mux.HandleFunc("POST /api/events", control.proxy)
 	mux.HandleFunc("DELETE /api/events", control.proxy)

@@ -18,7 +18,7 @@ El objetivo operativo confirmado es iniciar Cortex una vez, operar todos sus mó
 
 | Límite lógico propuesto | Responsabilidad |
 |---|---|
-| Supervisor del proceso principal | Lanzador oculto independiente del servidor Go; recupera hasta cinco cierres inesperados con esperas limitadas y registra los motivos. En el host desplegado, un acceso directo por usuario inicia Cortex al iniciar sesión; no se instala un servicio de Windows. |
+| Supervisor del proceso principal | Lanzador oculto independiente del servidor Go; recupera hasta cinco cierres inesperados con esperas limitadas y registra los motivos. El panel habilita o deshabilita un acceso directo por usuario para iniciar Cortex al iniciar sesión; no se instala un servicio de Windows. |
 | Núcleo y ciclo de vida | Un punto de inicio; arranque coordinado, estado de salud, reconexión, apagado y recuperación de módulos. Ningún módulo requiere lanzador manual propio. |
 | Panel web y control remoto | Estado, configuración, diagnóstico y operaciones autorizadas; mismas APIs desde la PC principal o remota. |
 | OBS | Cliente WebSocket con reconexión, estado de conexión, capacidades disponibles y confirmación de operaciones. |
@@ -57,7 +57,7 @@ Mantener por diseño los límites seguros ya documentados si se aceptan esas fun
 |---|---|---|---|
 | 0. Decisiones | Alcance principal, PCs, flujo operativo, Go y reconstrucción sin migración. | Completada en lo esencial; faltan detalles por módulo y exportación segura de escenas. | Completar decisiones concretas al entrar en cada módulo. |
 | 1. Primer corte técnico en Go | [Panel central, supervisor, dos feeds de prueba, OBS de solo lectura y SQLite inicial](11-PRIMER-CORTE-PRUEBA-TECNICA.md). | Implementado; la sesión larga y la aceptación en el escritorio siguen pendientes. | Desplegar en el equipo principal y completar validación operativa. |
-| 2. Fundaciones | Proyecto nuevo, configuración local, logs, panel mínimo, cierre ordenado, PWA y ejecutable. | Implementado, publicado y desplegado; el inicio automático se configuró localmente para el usuario del host actual, sin instalar un servicio. | Confirmar instalación/uso de PWA en los dispositivos previstos. |
+| 2. Fundaciones | Proyecto nuevo, configuración local, logs, panel mínimo, cierre ordenado, PWA y ejecutable. | Implementado, publicado y desplegado; el inicio automático se controla desde el panel y no requiere un servicio. | Confirmar instalación/uso de PWA en los dispositivos previstos. |
 | 3. OBS y supervisión | Health, conexión WebSocket, consulta de escena y acciones reversibles. | OBS sigue en solo lectura; lanzador recupera el proceso con hasta cinco reintentos. Escenas y acciones no integradas. | Exportar escenas limpias y definir una prueba reversible. |
 | 4. Datos | SQLite nueva, esquema versionado, respaldo, restauración y retención manual. | Registro general v1, deduplicación, borrado de historial, listado/borrado de respaldos y backup/restore implementados. Se migró la base existente y se preservó un respaldo. Backups sin cifrar. | Probar restauración con datos ficticios y decidir custodia externa/cifrado. |
 | 5. Flujos priorizados | Capacidades elegidas en cortes verticales, una por vez. | Prototipo Facebook externo conectado al API; acceso real, CEF y demás módulos pendientes. | Autenticar manualmente las dos cuentas en escritorio y verificar captura real. |
