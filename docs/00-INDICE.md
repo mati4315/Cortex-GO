@@ -37,14 +37,14 @@
 | 09-DICTAMEN-IA2.md | Revisión histórica | Dictamen previo al prototipo; incluye aviso de vigencia. |
 | 10-FLUJO-OPERATIVO-REAL.md | Requisitos del propietario | Inicio mínimo, chequeo de dos cuentas, controles manuales, cierre y recuperación; referencias visuales. |
 | 11-PRIMER-CORTE-PRUEBA-TECNICA.md | Implementado y probado | Supervisor, panel local, feeds sintéticos, SQLite y OBS de solo lectura. |
-| 12-SINCRONIZACION-ENTRE-PC.md | Recomendación pendiente | Opciones Git/remoto y reglas para trabajar entre las dos PCs. |
+| 12-SINCRONIZACION-ENTRE-PC.md | Flujo público registrado; flujo privado pendiente de implementar | GitHub para código limpio; Syncthing propuesto para una copia privada cifrada y optativa. |
 
-## Ubicaciones confirmadas
+## Proyecto y publicación
 
 - El proyecto se reconstruye desde cero en Go. Las rutas de las instalaciones locales se omiten de esta copia pública.
-- El propietario decidió mantener público el remoto de GitHub; se publicarán solo código y documentación revisados, sin bases, claves, datos privados ni capturas personales.
-- El repositorio local `main` está inicializado. El primer commit y la publicación siguen pendientes; las capturas y rutas locales ya están excluidas. Revisar [el plan de sincronización](12-SINCRONIZACION-ENTRE-PC.md).
-- El repositorio actual sí es Git y tiene una modificación previa en Control Cortex/backend/spotify-device-target.json. No fue leída ni modificada.
+- El propietario decidió mantener público el remoto de GitHub; se publican solo código y documentación revisados, sin bases, claves, datos privados ni capturas personales.
+- El primer commit limpio ya se publicó en la rama `main`. Las capturas y rutas locales quedan fuera del repositorio. Revisar [el plan de sincronización](12-SINCRONIZACION-ENTRE-PC.md).
+- El Cortex anterior permanece separado y sin cambios.
 
 ## Matriz de cobertura
 

@@ -1,12 +1,12 @@
 # Sincronización de desarrollo entre la PC y la notebook
 
 **Estado:** el propietario confirmó que el repositorio `mati4315/Cortex-GO` seguirá público. GitHub contendrá solo código, documentación y recursos revisados que no incluyan datos privados o delicados. La sincronización privada con la notebook es un flujo separado y optativo.  
-**Situación observada:** Git 2.56.0 está instalado. El repositorio local `main` ya fue inicializado y sus archivos revisados están preparados para el primer commit. El remoto está vacío; todavía no se hizo commit ni se envió contenido. Las capturas con personas, nombres y comentarios permanecen en la PC y están excluidas del índice de Git.
+**Situación observada:** Git 2.56.0 está instalado. El primer commit público de 35 archivos revisados ya está en `main` (`0f47428`). Se excluyeron del remoto las capturas con personas, nombres y comentarios; permanecen en la PC. La base sintética, ejecutables, logs y archivos de configuración locales también están fuera de Git.
 **Objetivo:** poder seguir desarrollando el mismo proyecto nuevo desde cualquiera de las dos computadoras.
 
 ## Recomendación
 
-Usar **GitHub público con GitHub Desktop** para el código y la documentación aptos para publicación. El remoto conserva el historial de cambios y permite descargar una copia del proyecto en la notebook. Antes del primer push se excluyen las capturas personales, secretos, bases, archivos locales y cualquier ruta o identificador de máquina que no haga falta.
+Usar **GitHub público con GitHub Desktop** para el código y la documentación aptos para publicación. El remoto conserva el historial de cambios y permite descargar una copia del proyecto en la notebook. Se excluyen capturas personales, secretos, bases, archivos locales y rutas o identificadores de máquina que no hacen falta.
 
 GitHub Desktop permite agregar la carpeta existente, revisar archivos, crear commits, publicar un repositorio y hacer Push/Pull desde botones. No hace falta mantener la carpeta del proyecto dentro de OneDrive o Dropbox.
 
@@ -48,19 +48,20 @@ Para videos, bibliotecas multimedia u otros assets grandes, evaluar almacenamien
 | Syncthing + bóveda y backup cifrados | Copia privada entre las dos PCs, con transferencia TLS; puede esperar a que la notebook vuelva a estar en línea. | Cada PC confiable conserva acceso a los archivos que descifre. | Candidato elegido para el paquete privado, con confirmación del usuario y versionado. |
 | Copia manual en USB | Funciona sin cuenta ni red. | Fácil llevar una versión vieja o pisar cambios. | Solo respaldo adicional de emergencia. |
 
-## Orden seguro de puesta en marcha
+## Puesta en marcha
 
-1. Revisar la lista pública y excluir capturas, datos personales, rutas locales, `.env`, bases, logs y ejecutables.
-2. Revisar `.gitignore` y configurar el nombre/correo de autor de Git para este repositorio.
-3. Crear el primer commit local y publicarlo; verificar que no haya archivos delicados.
-4. En la notebook, instalar Go compatible, clonar el remoto y correr `go test ./...` y `go build`.
-5. Probar el ciclo PC → notebook → PC con un cambio inocuo en un documento antes de empezar a trabajar alternadamente en módulos.
+1. **Hecho:** revisar la lista pública, excluir capturas, datos personales, rutas locales, `.env`, bases, logs y ejecutables.
+2. **Hecho:** revisar `.gitignore` y configurar la identidad de commit con un correo `noreply` de GitHub.
+3. **Hecho:** crear y publicar el primer commit limpio en `main`.
+4. **Pendiente:** en la notebook, instalar Go compatible, clonar el remoto y ejecutar `go test ./...` y `go build`.
+5. **Pendiente:** probar el ciclo PC → notebook → PC con un cambio inocuo en un documento.
+6. **Pendiente:** instalar Syncthing en ambas PCs y probar la carpeta privada con datos ficticios antes de conectarla a la base real o las claves.
 
 La pregunta de sincronización privada debe describir qué se enviará y pedir confirmación explícita. El paquete incluirá solo archivos autorizados, una copia consistente de SQLite cifrada y la bóveda cifrada de credenciales; nunca incluirá sesiones/cookies del navegador por defecto. Mostrar progreso, fecha del último envío y si la notebook está desconectada. Las credenciales se desbloquean localmente; el paquete no incluirá la contraseña maestra.
 
 ## Fuentes oficiales
 
-- [GitHub: repositorios privados](https://docs.github.com/en/repositories/creating-and-managing-repositories/about-repositories)
+- [GitHub: acerca de los repositorios](https://docs.github.com/en/repositories/creating-and-managing-repositories/about-repositories)
 - [GitHub Desktop: agregar y clonar repositorios](https://docs.github.com/en/desktop/adding-and-cloning-repositories)
 - [GitHub Desktop: sincronizar ramas con Push/Pull](https://docs.github.com/en/desktop/working-with-your-remote-repository-on-github-or-github-enterprise/syncing-your-branch-in-github-desktop)
 - [Git: clonar un repositorio](https://git-scm.com/docs/git-clone)
