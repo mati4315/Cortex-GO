@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,19 +21,32 @@ import (
 const maxBackupUploadBytes = 128 << 20
 
 type feedStatus struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	State       string `json:"state"`
-	Connected   bool   `json:"connected"`
-	LastEventAt string `json:"lastEventAt,omitempty"`
-	EventCount  int    `json:"eventCount"`
-	LastError   string `json:"lastError,omitempty"`
+	ID                    string `json:"id"`
+	Name                  string `json:"name"`
+	State                 string `json:"state"`
+	Connected             bool   `json:"connected"`
+	CaptureAgentConnected bool   `json:"captureAgentConnected"`
+	CommentsPage          bool   `json:"commentsPage"`
+	VisibleRows           int    `json:"visibleRows"`
+	NewComments           int    `json:"newComments"`
+	LastScanAt            string `json:"lastScanAt,omitempty"`
+	LastDetectedAt        string `json:"lastDetectedAt,omitempty"`
+	LastEventAt           string `json:"lastEventAt,omitempty"`
+	EventCount            int    `json:"eventCount"`
+	LastError             string `json:"lastError,omitempty"`
 }
 
 type storageStatus struct {
-	State      string `json:"state"`
-	EventCount int    `json:"eventCount"`
-	LastSaved  string `json:"lastSaved,omitempty"`
+	State         string `json:"state"`
+	SchemaVersion int    `json:"schemaVersion"`
+	EventCount    int    `json:"eventCount"`
+	LastSaved     string `json:"lastSaved,omitempty"`
+}
+
+type backupFileStatus struct {
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Modified string `json:"modifiedAt"`
 }
 
 type workerStatus struct {
@@ -64,8 +80,8 @@ func newWorkerService(store *eventStore, probe func(context.Context) obsStatus) 
 		startedAt: now,
 		probe:     probe,
 		feeds: map[string]feedStatus{
-			"a": {ID: "a", Name: "Feed de prueba A", State: "simulado_conectado", Connected: true},
-			"b": {ID: "b", Name: "Feed de prueba B", State: "simulado_conectado", Connected: true},
+			"a": {ID: "a", Name: "Cuenta 1", State: "no_iniciado", Connected: true},
+			"b": {ID: "b", Name: "Cuenta 2", State: "no_iniciado", Connected: true},
 		},
 		obs:  obsStatus{State: "checking", Label: "Comprobando OBS", ReadOnly: true},
 		stop: make(chan struct{}),
@@ -115,8 +131,15 @@ func runWorker(address, dbPath, parentURL string) error {
 func (s *workerService) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
+	mux.HandleFunc("POST /api/events", s.handleCaptureEvent)
+	mux.HandleFunc("DELETE /api/events", s.handleDeleteAllEvents)
+	mux.HandleFunc("DELETE /api/events/{id}", s.handleDeleteEvent)
+	mux.HandleFunc("POST /api/feeds/{id}/status", s.handleCaptureStatus)
 	mux.HandleFunc("POST /api/simulate/comment", s.handleSimulatedComment)
 	mux.HandleFunc("POST /api/backup", s.handleBackup)
+	mux.HandleFunc("GET /api/backups", s.handleBackups)
+	mux.HandleFunc("DELETE /api/backups", s.handleDeleteAllBackups)
+	mux.HandleFunc("DELETE /api/backups/{name}", s.handleDeleteBackup)
 	mux.HandleFunc("POST /api/restore", s.handleRestore)
 	mux.HandleFunc("POST /api/feeds/{id}/disconnect", s.handleFeedDisconnect)
 	mux.HandleFunc("POST /api/feeds/{id}/reconnect", s.handleFeedReconnect)
@@ -130,7 +153,12 @@ func (s *workerService) handleStatus(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	total, err := s.store.Total(ctx)
 	if err != nil {
-		http.Error(w, "No se pudo consultar la base sintética", http.StatusServiceUnavailable)
+		http.Error(w, "No se pudo consultar la base de eventos", http.StatusServiceUnavailable)
+		return
+	}
+	schemaVersion, err := s.store.SchemaVersion(ctx)
+	if err != nil {
+		http.Error(w, "No se pudo consultar la versión del esquema", http.StatusServiceUnavailable)
 		return
 	}
 	feeds := make([]feedStatus, 0, 2)
@@ -145,14 +173,14 @@ func (s *workerService) handleStatus(w http.ResponseWriter, r *http.Request) {
 	for i := range feeds {
 		count, countErr := s.store.Count(ctx, feeds[i].ID)
 		if countErr != nil {
-			http.Error(w, "No se pudo consultar la base sintética", http.StatusServiceUnavailable)
+			http.Error(w, "No se pudo consultar la base de eventos", http.StatusServiceUnavailable)
 			return
 		}
 		feeds[i].EventCount = count
 		if feeds[i].LastEventAt == "" {
 			feeds[i].LastEventAt, countErr = s.store.Latest(ctx, feeds[i].ID)
 			if countErr != nil {
-				http.Error(w, "No se pudo consultar la base sintética", http.StatusServiceUnavailable)
+				http.Error(w, "No se pudo consultar la base de eventos", http.StatusServiceUnavailable)
 				return
 			}
 		}
@@ -160,12 +188,12 @@ func (s *workerService) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if lastSaved == "" && total > 0 {
 		lastSaved, err = s.store.LatestEventTime(ctx)
 		if err != nil {
-			http.Error(w, "No se pudo consultar la base sintética", http.StatusServiceUnavailable)
+			http.Error(w, "No se pudo consultar la base de eventos", http.StatusServiceUnavailable)
 			return
 		}
 	}
 	response := workerStatus{
-		Storage: storageStatus{State: "connected", EventCount: total, LastSaved: lastSaved},
+		Storage: storageStatus{State: "connected", SchemaVersion: schemaVersion, EventCount: total, LastSaved: lastSaved},
 		OBS:     obs,
 		Feeds:   feeds,
 	}
@@ -181,10 +209,197 @@ func (s *workerService) handleEvents(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	events, err := s.store.Recent(ctx, 100)
 	if err != nil {
-		http.Error(w, "No se pudo leer el historial sintético", http.StatusServiceUnavailable)
+		http.Error(w, "No se pudo leer el historial de comentarios", http.StatusServiceUnavailable)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+}
+
+func (s *workerService) handleCaptureEvent(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var input struct {
+		FeedID     string `json:"feedId"`
+		SourceID   string `json:"sourceId"`
+		ExternalID string `json:"externalId"`
+		StreamID   string `json:"streamId"`
+		Author     string `json:"author"`
+		Message    string `json:"message"`
+		EventAt    string `json:"eventAt"`
+	}
+	if err := decoder.Decode(&input); err != nil {
+		http.Error(w, "El evento recibido no tiene un formato válido", http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		http.Error(w, "El evento recibido contiene datos adicionales o inválidos", http.StatusBadRequest)
+		return
+	}
+	input.FeedID = strings.ToLower(strings.TrimSpace(input.FeedID))
+	input.SourceID = strings.ToLower(strings.TrimSpace(input.SourceID))
+	input.ExternalID = strings.TrimSpace(input.ExternalID)
+	input.StreamID = strings.TrimSpace(input.StreamID)
+	author := strings.TrimSpace(input.Author)
+	message := strings.TrimSpace(input.Message)
+	if (input.FeedID != "a" && input.FeedID != "b") || !validEventSourceID(input.SourceID) ||
+		len(input.ExternalID) > 256 || input.StreamID == "" || len(input.StreamID) > 128 ||
+		author == "" || len([]rune(author)) > 160 || message == "" || len([]rune(message)) > 4096 {
+		http.Error(w, "El evento excede los límites o la cuenta/origen no es válido", http.StatusBadRequest)
+		return
+	}
+	eventAt := time.Now().UTC()
+	eventTimeForFingerprint := ""
+	if input.EventAt != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, input.EventAt)
+		if err != nil {
+			http.Error(w, "La hora original del evento debe estar en formato RFC3339", http.StatusBadRequest)
+			return
+		}
+		eventAt = parsed.UTC()
+		eventTimeForFingerprint = eventAt.Format(time.RFC3339Nano)
+	}
+	eventTime := eventAt.Format(time.RFC3339Nano)
+	dedupKey := "id:" + input.ExternalID
+	if input.ExternalID == "" {
+		fingerprint := sha256.Sum256([]byte(strings.Join([]string{
+			input.SourceID, input.FeedID, input.StreamID, author, message, eventTimeForFingerprint,
+		}, "\x00")))
+		dedupKey = "hash:" + hex.EncodeToString(fingerprint[:])
+	}
+
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	stored, inserted, err := s.store.AddCaptured(ctx, capturedEvent{
+		FeedID: input.FeedID, SourceID: input.SourceID, ExternalID: input.ExternalID,
+		StreamID: input.StreamID, Author: author, Message: message, EventAt: eventTime,
+		DedupKey: dedupKey,
+	})
+	if err != nil {
+		http.Error(w, "No se pudo guardar el evento recibido", http.StatusServiceUnavailable)
+		return
+	}
+	if !inserted {
+		writeJSON(w, http.StatusOK, map[string]any{"state": "duplicate", "event": stored})
+		return
+	}
+	s.mu.Lock()
+	feed := s.feeds[input.FeedID]
+	feed.LastEventAt = stored.CreatedAt
+	feed.LastError = ""
+	s.feeds[input.FeedID] = feed
+	s.lastSaved = stored.CreatedAt
+	s.mu.Unlock()
+	writeJSON(w, http.StatusCreated, map[string]any{"state": "saved", "event": stored})
+}
+
+func validEventSourceID(sourceID string) bool {
+	if sourceID == "" || len(sourceID) > 64 {
+		return false
+	}
+	for _, char := range sourceID {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' || char == '_' || char == ':' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func (s *workerService) handleDeleteEvent(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id < 1 {
+		http.Error(w, "El identificador del comentario no es válido", http.StatusBadRequest)
+		return
+	}
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	deleted, err := s.store.Delete(ctx, id)
+	if err != nil {
+		http.Error(w, "No se pudo borrar el comentario guardado", http.StatusServiceUnavailable)
+		return
+	}
+	if !deleted {
+		http.NotFound(w, r)
+		return
+	}
+	s.mu.Lock()
+	s.lastSaved = ""
+	for _, feed := range s.feeds {
+		feed.LastEventAt = ""
+		s.feeds[feed.ID] = feed
+	}
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]string{"state": "deleted"})
+}
+
+func (s *workerService) handleDeleteAllEvents(w http.ResponseWriter, r *http.Request) {
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := s.store.DeleteAll(ctx); err != nil {
+		http.Error(w, "No se pudo vaciar el historial de comentarios", http.StatusServiceUnavailable)
+		return
+	}
+	s.mu.Lock()
+	s.lastSaved = ""
+	for _, feed := range s.feeds {
+		feed.LastEventAt = ""
+		s.feeds[feed.ID] = feed
+	}
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]string{"state": "deleted"})
+}
+
+func (s *workerService) handleCaptureStatus(w http.ResponseWriter, r *http.Request) {
+	id := strings.ToLower(r.PathValue("id"))
+	if id != "a" && id != "b" {
+		http.Error(w, "La cuenta no es válida", http.StatusNotFound)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 2048)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var input struct {
+		CommentsPage bool  `json:"commentsPage"`
+		VisibleRows  int   `json:"visibleRows"`
+		NewComments  int   `json:"newComments"`
+		LastDetected int64 `json:"lastDetected"`
+	}
+	if err := decoder.Decode(&input); err != nil || input.VisibleRows < 0 || input.VisibleRows > 500 || input.NewComments < 0 || input.NewComments > 1_000_000 || input.LastDetected < 0 {
+		http.Error(w, "El estado del capturador no es válido", http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		http.Error(w, "El estado del capturador contiene datos adicionales", http.StatusBadRequest)
+		return
+	}
+	now := time.Now().UTC()
+	s.mu.Lock()
+	feed := s.feeds[id]
+	feed.CaptureAgentConnected = true
+	feed.CommentsPage = input.CommentsPage
+	feed.VisibleRows = input.VisibleRows
+	feed.NewComments = input.NewComments
+	feed.LastScanAt = now.Format(time.RFC3339Nano)
+	feed.Connected = true
+	feed.LastError = ""
+	if input.CommentsPage {
+		feed.State = "comments_page_ready"
+	} else {
+		feed.State = "facebook_open"
+	}
+	if input.LastDetected > 0 {
+		feed.LastDetectedAt = time.UnixMilli(input.LastDetected).UTC().Format(time.RFC3339Nano)
+	}
+	s.feeds[id] = feed
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]string{"state": feed.State})
 }
 
 func (s *workerService) handleSimulatedComment(w http.ResponseWriter, r *http.Request) {
@@ -253,6 +468,137 @@ func (s *workerService) handleBackup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *workerService) handleBackups(w http.ResponseWriter, r *http.Request) {
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+
+	directory, err := managedBackupDirectory(s.store.path, false)
+	if errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, http.StatusOK, map[string]any{"backups": []backupFileStatus{}})
+		return
+	}
+	if err != nil {
+		http.Error(w, "La carpeta de respaldos no es un directorio local válido", http.StatusInternalServerError)
+		return
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		http.Error(w, "No se pudo leer la carpeta local de respaldos", http.StatusInternalServerError)
+		return
+	}
+	backups := make([]backupFileStatus, 0, len(entries))
+	for index := len(entries) - 1; index >= 0; index-- {
+		entry := entries[index]
+		name := entry.Name()
+		if !isManagedBackupName(name) {
+			continue
+		}
+		info, err := os.Lstat(filepath.Join(directory, name))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			http.Error(w, "No se pudo inspeccionar un respaldo local", http.StatusInternalServerError)
+			return
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		backups = append(backups, backupFileStatus{
+			Name: name, Size: info.Size(), Modified: info.ModTime().UTC().Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"backups": backups})
+}
+
+func (s *workerService) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+
+	name := r.PathValue("name")
+	if !isManagedBackupName(name) {
+		http.Error(w, "El nombre no corresponde a un respaldo administrado por Cortex Go", http.StatusBadRequest)
+		return
+	}
+	directory, err := managedBackupDirectory(s.store.path, false)
+	if errors.Is(err, os.ErrNotExist) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, "La carpeta de respaldos no es un directorio local válido", http.StatusInternalServerError)
+		return
+	}
+	path := filepath.Join(directory, name)
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, "No se pudo inspeccionar el respaldo", http.StatusInternalServerError)
+		return
+	}
+	if !info.Mode().IsRegular() {
+		http.Error(w, "El archivo no es un respaldo regular de Cortex Go", http.StatusBadRequest)
+		return
+	}
+	if err := os.Remove(path); err != nil {
+		http.Error(w, "No se pudo borrar el respaldo local", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"state": "deleted", "name": name})
+}
+
+func (s *workerService) handleDeleteAllBackups(w http.ResponseWriter, r *http.Request) {
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+
+	directory, err := managedBackupDirectory(s.store.path, false)
+	if errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, http.StatusOK, map[string]any{"state": "deleted", "deletedCount": 0, "failedFiles": []string{}})
+		return
+	}
+	if err != nil {
+		http.Error(w, "La carpeta de respaldos no es un directorio local válido", http.StatusInternalServerError)
+		return
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		http.Error(w, "No se pudo leer la carpeta local de respaldos", http.StatusInternalServerError)
+		return
+	}
+	deletedCount := 0
+	failedFiles := make([]string, 0)
+	for _, entry := range entries {
+		name := entry.Name()
+		if !isManagedBackupName(name) {
+			continue
+		}
+		path := filepath.Join(directory, name)
+		info, err := os.Lstat(path)
+		if err == nil && info.Mode().IsRegular() {
+			err = os.Remove(path)
+		} else if err == nil {
+			err = errors.New("el archivo no es regular")
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			failedFiles = append(failedFiles, name)
+			continue
+		}
+		if err == nil || errors.Is(err, os.ErrNotExist) {
+			deletedCount++
+		}
+	}
+	state := "deleted"
+	if len(failedFiles) > 0 {
+		state = "partial"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"state": state, "deletedCount": deletedCount, "failedFiles": failedFiles,
+	})
+}
+
 func (s *workerService) handleRestore(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
@@ -276,8 +622,8 @@ func (s *workerService) handleRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	backupDirectory := filepath.Join(filepath.Dir(s.store.path), "backups")
-	if err := os.MkdirAll(backupDirectory, 0o700); err != nil {
+	backupDirectory, err := managedBackupDirectory(s.store.path, true)
+	if err != nil {
 		http.Error(w, "No se pudo preparar la carpeta local de respaldos", http.StatusInternalServerError)
 		return
 	}
@@ -335,8 +681,8 @@ func (s *workerService) handleRestore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *workerService) createLocalBackup(ctx context.Context) (fileName, path string, err error) {
-	backupDirectory := filepath.Join(filepath.Dir(s.store.path), "backups")
-	if err := os.MkdirAll(backupDirectory, 0o700); err != nil {
+	backupDirectory, err := managedBackupDirectory(s.store.path, true)
+	if err != nil {
 		return "", "", fmt.Errorf("preparar carpeta local: %w", err)
 	}
 	timestamp := time.Now().UTC().Format("20060102-150405-000000000")
@@ -353,6 +699,41 @@ func (s *workerService) createLocalBackup(ctx context.Context) (fileName, path s
 		return fileName, path, nil
 	}
 	return "", "", errors.New("no se pudo reservar un nombre único para el respaldo")
+}
+
+func isManagedBackupName(name string) bool {
+	if strings.ContainsAny(name, `/\\`) || filepath.Base(name) != name || !strings.HasPrefix(name, "CortexGo-") || !strings.HasSuffix(name, ".sqlite") {
+		return false
+	}
+	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(name, "CortexGo-"), ".sqlite"), "-")
+	if len(parts) != 4 || len(parts[0]) != 8 || len(parts[1]) != 6 || len(parts[2]) != 9 || len(parts[3]) != 3 {
+		return false
+	}
+	for _, part := range parts {
+		for _, digit := range part {
+			if digit < '0' || digit > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func managedBackupDirectory(databasePath string, create bool) (string, error) {
+	directory := filepath.Join(filepath.Dir(databasePath), "backups")
+	if create {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			return "", err
+		}
+	}
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return directory, err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("la carpeta de respaldos no debe ser un enlace ni otro tipo de archivo")
+	}
+	return directory, nil
 }
 
 func (s *workerService) handleFeedDisconnect(w http.ResponseWriter, r *http.Request) {

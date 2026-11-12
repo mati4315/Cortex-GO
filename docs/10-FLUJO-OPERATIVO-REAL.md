@@ -1,7 +1,7 @@
 # Flujo operativo real y referencias visuales
 
 **Fuente:** respuestas y capturas compartidas por el propietario el 12 de noviembre de 2026.  
-**Estado:** describe el flujo reportado y el aspecto visual de ejemplos reales; todavía no es una especificación completa de escenas OBS.  
+**Estado:** describe el flujo reportado y el aspecto visual de ejemplos reales; todavía no es una especificación completa de escenas OBS. Las decisiones posteriores del propietario sobre PC principal y retención de Facebook quedan registradas abajo.
 **Alcance:** reconstruir desde cero, sin migrar código. Todos los módulos salvo SocialStream Ninja continúan en alcance.
 
 ## Flujo confirmado por el propietario
@@ -50,7 +50,8 @@
 ## PCs y Trigger Studio
 
 - El propietario confirma que actualmente Cortex, la captura de Facebook, Spotify y OBS corren en la misma PC.
-- La segunda PC futura será una notebook usada solo como control remoto; OBS, Cortex y los módulos siguen en la PC principal.
+- La PC de escritorio queda confirmada como host principal de Cortex, captura de Facebook, Spotify y OBS.
+- La notebook se usará solo como control remoto por Tailscale; OBS, Cortex y los módulos permanecen en el escritorio.
 - La notebook abre el panel central de Cortex por una red privada autorizada. Trigger Studio es una sección del panel, no otro programa que se instala y se abre en la notebook.
 - No se necesita un agente ni backend en la notebook. Si en el futuro cambia el rol de esa PC, se revisa la arquitectura antes de agregar un proceso local.
 - El panel HTTP/WebSocket actual de Trigger Studio carece de autenticación propia según su documentación. No reutilizarlo expuesto tal cual; el acceso remoto nuevo debe pasar por controles y autorizaciones del Cortex central.
@@ -70,9 +71,9 @@ Las capturas ayudan a reconstruir qué ve la audiencia, pero no revelan nombres 
 
 ## Decisiones que siguen abiertas
 
-1. ¿Dónde corre cada vivo y cómo inicia sesión la captura de cada cuenta? Confirmar PCs, pestañas y recuperación de sesión, sin compartir contraseñas ni tokens.
+1. **Resuelto parcialmente:** Cortex y las cuentas corren en la PC de escritorio; el operador inicia sesión manualmente en dos perfiles aislados. Falta validar persistencia/2FA y documentar los enlaces y pasos exactos de apertura de cada vivo.
 2. ¿Qué botones exactos usa el operador para enseñar/seleccionar una animación de Rulo y para volver a lanzar los bolilleros comprados?
-3. ¿Qué debe quedar guardado al cierre: comentarios, eventos, destacados, resultados de sorteos, estado de Rulo u otros datos? Indicar retención y qué información se puede descartar.
+3. **Facebook resuelto:** guardar nombres y textos hasta que el usuario los borre manualmente de la base activa. Los respaldos son copias independientes y deben borrarse aparte. Falta decidir qué guardar y durante cuánto tiempo para destacados, resultados, Rulo y los demás módulos.
 4. ¿Qué significa reiniciar “todo”: solo reconectar una integración, reiniciar el módulo responsable o reiniciar Cortex? Mantener visible el impacto antes de reiniciar.
 
 ## Consecuencia para lenguaje y arquitectura

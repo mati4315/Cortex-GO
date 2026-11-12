@@ -125,6 +125,9 @@ func (s *eventStore) Restore(ctx context.Context, source string) error {
 	if err := s.applySQLiteSnapshot(ctx, sourcePath); err != nil {
 		return s.rollbackRestore(rollbackPath, fmt.Errorf("restaurar respaldo: %w", err))
 	}
+	if err := migrateEventSchema(s.db); err != nil {
+		return s.rollbackRestore(rollbackPath, fmt.Errorf("actualizar el esquema del respaldo: %w", err))
+	}
 	if err := validateSQLiteDatabase(ctx, s.db); err != nil {
 		return s.rollbackRestore(rollbackPath, fmt.Errorf("validar base restaurada: %w", err))
 	}
@@ -229,11 +232,31 @@ func validateSQLiteDatabase(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("resultado inesperado de integridad SQLite: %d filas", resultCount)
 	}
 
-	var eventCount int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM synthetic_events`).Scan(&eventCount); err != nil {
-		return fmt.Errorf("comprobar esquema de eventos sintéticos: %w", err)
+	var eventsTableExists bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='events')`).Scan(&eventsTableExists); err != nil {
+		return fmt.Errorf("comprobar esquema de eventos: %w", err)
 	}
-	return nil
+	if eventsTableExists {
+		var eventCount int
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events`).Scan(&eventCount); err != nil {
+			return fmt.Errorf("leer registro de eventos: %w", err)
+		}
+		return nil
+	}
+	// Los snapshots hechos antes de la migración siguen siendo importables;
+	// Restore actualiza su esquema después de aplicarlos.
+	var legacyTableExists bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='synthetic_events')`).Scan(&legacyTableExists); err != nil {
+		return fmt.Errorf("comprobar esquema anterior: %w", err)
+	}
+	if legacyTableExists {
+		var eventCount int
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM synthetic_events`).Scan(&eventCount); err != nil {
+			return fmt.Errorf("leer eventos anteriores: %w", err)
+		}
+		return nil
+	}
+	return errors.New("el archivo no contiene el esquema de eventos de Cortex Go")
 }
 
 func absoluteFilePath(path string) (string, error) {

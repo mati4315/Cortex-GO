@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -70,6 +71,76 @@ func TestFeedsKeepIndependentStatusAndPersistEvents(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].Message != "evento de prueba A" {
 		t.Fatalf("el evento no sobrevivió a la reapertura: %#v", events)
+	}
+}
+
+func TestCapturedEventAPIIsIdempotentAndSupportsManualDeletion(t *testing.T) {
+	store, err := openEventStore(filepath.Join(t.TempDir(), "captured.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := newWorkerService(store, func(context.Context) obsStatus {
+		return obsStatus{State: "disabled", Label: "OBS de prueba omitido", ReadOnly: true}
+	})
+	mux := http.NewServeMux()
+	service.registerRoutes(mux)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	defer store.Close()
+
+	payload := `{"feedId":"a","sourceId":"facebook:cuenta-1","externalId":"comment-42","streamId":"live-42","author":"Autora","message":"hola","eventAt":"2026-11-13T05:00:00Z"}`
+	postJSON(t, server.URL+"/api/events", payload, http.StatusCreated)
+	duplicatePayload := `{"feedId":"a","sourceId":"facebook:cuenta-1","externalId":"comment-42","streamId":"live-42","author":"Autora","message":"hola re-renderizado","eventAt":"2026-11-13T05:00:00Z"}`
+	postJSON(t, server.URL+"/api/events", duplicatePayload, http.StatusOK)
+
+	eventsResponse, err := http.Get(server.URL + "/api/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events struct {
+		Events []syntheticEvent `json:"events"`
+	}
+	if err := json.NewDecoder(eventsResponse.Body).Decode(&events); err != nil {
+		eventsResponse.Body.Close()
+		t.Fatal(err)
+	}
+	eventsResponse.Body.Close()
+	if len(events.Events) != 1 || events.Events[0].Message != "hola" || events.Events[0].SourceID != "facebook:cuenta-1" {
+		t.Fatalf("el historial contiene un duplicado o no conservó el primer comentario: %#v", events.Events)
+	}
+
+	deleteRequest, err := http.NewRequest(http.MethodDelete, server.URL+"/api/events/"+strconv.FormatInt(events.Events[0].ID, 10), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteResponse, err := http.DefaultClient.Do(deleteRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteResponse.Body.Close()
+	if deleteResponse.StatusCode != http.StatusOK {
+		t.Fatalf("borrar un comentario devolvió %s", deleteResponse.Status)
+	}
+
+	postJSON(t, server.URL+"/api/events", duplicatePayload, http.StatusCreated)
+	deleteAllRequest, err := http.NewRequest(http.MethodDelete, server.URL+"/api/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteAllResponse, err := http.DefaultClient.Do(deleteAllRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteAllResponse.Body.Close()
+	if deleteAllResponse.StatusCode != http.StatusOK {
+		t.Fatalf("borrar todo el historial devolvió %s", deleteAllResponse.Status)
+	}
+	total, err := store.Total(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 0 {
+		t.Fatalf("el borrado manual dejó %d eventos activos", total)
 	}
 }
 

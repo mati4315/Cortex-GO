@@ -98,13 +98,24 @@ func TestGitSyncPreviewLimitsFilesAndRequiresPublicConfirmation(t *testing.T) {
 }
 
 func TestPublishablePathExcludesPrivateAndGeneratedFiles(t *testing.T) {
-	allowed := []string{"README.md", "go.mod", "go.sum", "cmd/cortex-go/store.go", "cmd/cortex-go/web/index.html", "docs/12-SINCRONIZACION-ENTRE-PC.md"}
+	allowed := []string{
+		"README.md", "go.mod", "go.sum", "cmd/cortex-go/store.go",
+		"cmd/cortex-go/web/index.html", "cmd/cortex-go/web/sw.js",
+		"cmd/cortex-go/web/manifest.webmanifest", "cmd/cortex-go/web/icons/icon-192.png",
+		"experiments/facebook-browser-poc/main.go", "experiments/facebook-browser-poc/go.mod",
+		"experiments/facebook-browser-poc/README.md", "docs/12-SINCRONIZACION-ENTRE-PC.md",
+	}
 	for _, path := range allowed {
 		if !publishablePath(path) {
 			t.Errorf("debería permitirse revisar %q", path)
 		}
 	}
-	blocked := []string{".gitignore", ".env", "data/first-cut.sqlite", "data/backups/latest.sqlite", "logs/cortex.log", "img programa real/stream.png", "bin/CortexGo.exe", "secret.json"}
+	blocked := []string{
+		".gitignore", ".env", "data/first-cut.sqlite", "data/backups/latest.sqlite", "logs/cortex.log",
+		"img programa real/stream.png", "bin/CortexGo.exe", "secret.json",
+		"cmd/cortex-go/web/private.png", "cmd/cortex-go/web/icons/other.png",
+		"experiments/facebook-browser-poc/.env", "experiments/facebook-browser-poc/private.json",
+	}
 	for _, path := range blocked {
 		if publishablePath(path) {
 			t.Errorf("no debería permitirse publicar %q desde el atajo", path)

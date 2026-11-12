@@ -122,6 +122,118 @@ func TestRestoreHTTPHandlerRejectsInvalidSQLiteFile(t *testing.T) {
 	}
 }
 
+func TestBackupListAndDeleteHandlersOnlyRemoveManagedSnapshots(t *testing.T) {
+	dataDirectory := t.TempDir()
+	store, err := openEventStore(filepath.Join(dataDirectory, "first-cut.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := newWorkerService(store, func(context.Context) obsStatus {
+		return obsStatus{State: "disabled", Label: "OBS de prueba omitido", ReadOnly: true}
+	})
+	mux := http.NewServeMux()
+	service.registerRoutes(mux)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	defer store.Close()
+
+	firstName, _, err := service.createLocalBackup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondName, _, err := service.createLocalBackup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	backupDirectory := filepath.Join(dataDirectory, "backups")
+	foreignPath := filepath.Join(backupDirectory, "manual-note.sqlite")
+	foreignContents := []byte("archivo que Cortex no debe administrar")
+	if err := os.WriteFile(foreignPath, foreignContents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	listResponse, err := http.Get(server.URL + "/api/backups")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed struct {
+		Backups []backupFileStatus `json:"backups"`
+	}
+	if err := json.NewDecoder(listResponse.Body).Decode(&listed); err != nil {
+		listResponse.Body.Close()
+		t.Fatal(err)
+	}
+	listResponse.Body.Close()
+	if listResponse.StatusCode != http.StatusOK || len(listed.Backups) != 2 {
+		t.Fatalf("la lista de respaldos no coincide: status=%s backups=%#v", listResponse.Status, listed.Backups)
+	}
+
+	deleteRequest, err := http.NewRequest(http.MethodDelete, server.URL+"/api/backups/"+firstName, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteResponse, err := http.DefaultClient.Do(deleteRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteResponse.Body.Close()
+	if deleteResponse.StatusCode != http.StatusOK {
+		t.Fatalf("el borrado individual devolvió %s", deleteResponse.Status)
+	}
+	if _, err := os.Stat(filepath.Join(backupDirectory, firstName)); !os.IsNotExist(err) {
+		t.Fatalf("el respaldo individual sigue en la carpeta: %v", err)
+	}
+
+	bulkResponse, err := http.NewRequest(http.MethodDelete, server.URL+"/api/backups", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(bulkResponse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deleted struct {
+		State        string   `json:"state"`
+		DeletedCount int      `json:"deletedCount"`
+		FailedFiles  []string `json:"failedFiles"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&deleted); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || deleted.State != "deleted" || deleted.DeletedCount != 1 || len(deleted.FailedFiles) != 0 {
+		t.Fatalf("el borrado total devolvió estado inesperado: status=%s body=%#v", response.Status, deleted)
+	}
+	if _, err := os.Stat(filepath.Join(backupDirectory, secondName)); !os.IsNotExist(err) {
+		t.Fatalf("el segundo respaldo sigue en la carpeta: %v", err)
+	}
+	actualForeignContents, err := os.ReadFile(foreignPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(actualForeignContents) != string(foreignContents) {
+		t.Fatalf("el borrado de respaldos alteró un archivo ajeno: %q", actualForeignContents)
+	}
+}
+
+func TestManagedBackupNameRejectsPathComponents(t *testing.T) {
+	valid := "CortexGo-20261113-153000-123456789-004.sqlite"
+	if !isManagedBackupName(valid) {
+		t.Fatalf("se rechazó un nombre de respaldo válido: %q", valid)
+	}
+	for _, invalid := range []string{
+		"../" + valid,
+		`..\` + valid,
+		"CortexGo-latest.sqlite",
+		"manual-note.sqlite",
+	} {
+		if isManagedBackupName(invalid) {
+			t.Errorf("se aceptó un nombre no administrado: %q", invalid)
+		}
+	}
+}
+
 func postBackupFile(t *testing.T, url, filename string, contents []byte, expectedStatus int) *http.Response {
 	t.Helper()
 	var body bytes.Buffer

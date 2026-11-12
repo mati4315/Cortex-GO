@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ import (
 )
 
 const defaultControlAddress = "127.0.0.1:17845"
+const maxGuardianRestarts = 5
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -29,6 +31,7 @@ func main() {
 func run(args []string) error {
 	flags := flag.NewFlagSet("cortex-go", flag.ContinueOnError)
 	worker := flags.Bool("worker", false, "modo interno del servidor supervisado")
+	managed := flags.Bool("managed", false, "modo interno supervisado por el lanzador de Cortex")
 	listenAddress := flags.String("listen", defaultControlAddress, "dirección local del panel")
 	dbPath := flags.String("db", "", "ruta interna de la base de prueba")
 	parentURL := flags.String("parent-url", "", "URL interna del supervisor; solo para el servidor hijo")
@@ -46,6 +49,9 @@ func run(args []string) error {
 	}
 	if *dataDir == "" {
 		*dataDir = defaultDataDirectory()
+	}
+	if !*managed {
+		return runGuardian(args, *dataDir, *listenAddress, !*noBrowser)
 	}
 	if err := os.MkdirAll(*dataDir, 0o700); err != nil {
 		return fmt.Errorf("no se pudo preparar la carpeta local: %w", err)
@@ -111,6 +117,7 @@ func run(args []string) error {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
+	var serveFailure error
 	select {
 	case <-shutdown:
 		logger.Print("cierre solicitado desde el panel")
@@ -119,6 +126,7 @@ func run(args []string) error {
 	case err := <-serveErr:
 		if !errors.Is(err, http.ErrServerClosed) {
 			logger.Printf("el panel local se cerró: %v", err)
+			serveFailure = fmt.Errorf("el panel local se cerró inesperadamente: %w", err)
 		}
 	}
 	cancel()
@@ -131,7 +139,61 @@ func run(args []string) error {
 		logger.Print("el supervisor tardó más de lo esperado en cerrar")
 	}
 	logger.Print("Cortex Go cerró el supervisor de prueba")
-	return nil
+	return serveFailure
+}
+
+func runGuardian(args []string, dataDir, listenAddress string, openBrowser bool) error {
+	if isExistingCortex(listenAddress) {
+		if openBrowser {
+			openURL(controlURL(controlListenerAddress(listenAddress)))
+		}
+		return nil
+	}
+	logDir := filepath.Join(dataDir, "logs")
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return fmt.Errorf("no se pudo preparar el registro del lanzador: %w", err)
+	}
+	logFile, err := os.OpenFile(filepath.Join(logDir, "cortex-go-guardian.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("no se pudo abrir el registro del lanzador: %w", err)
+	}
+	defer logFile.Close()
+	logger := log.New(logFile, "", log.Ldate|log.Ltime|log.LUTC)
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("no se pudo identificar Cortex Go para supervisarlo: %w", err)
+	}
+
+	restarts := 0
+	for {
+		childArgs := make([]string, 0, len(args)+1)
+		childArgs = append(childArgs, "--managed")
+		childArgs = append(childArgs, args...)
+		child := exec.Command(executable, childArgs...)
+		configureHiddenProcess(child)
+		child.Stdout = logFile
+		child.Stderr = logFile
+		if err := child.Start(); err != nil {
+			restarts++
+			logger.Printf("no se pudo iniciar Cortex Go (intento %d): %v", restarts, err)
+		} else {
+			logger.Printf("Cortex Go iniciado por el lanzador (pid %d)", child.Process.Pid)
+			if err := child.Wait(); err == nil {
+				logger.Print("Cortex Go cerró normalmente; el lanzador terminó")
+				return nil
+			} else {
+				restarts++
+				logger.Printf("Cortex Go terminó inesperadamente (intento automático %d): %v", restarts, err)
+			}
+		}
+		if restarts > maxGuardianRestarts {
+			logger.Printf("se alcanzó el límite de reinicios; abre Cortex Go de nuevo para continuar")
+			return fmt.Errorf("Cortex Go terminó después de %d intentos automáticos", maxGuardianRestarts)
+		}
+		delay := retryDelay(restarts)
+		logger.Printf("se intentará iniciar Cortex Go otra vez en %s", delay)
+		time.Sleep(delay)
+	}
 }
 
 // defaultDataDirectory mantiene los datos de esta prueba bajo el proyecto al

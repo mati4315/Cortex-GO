@@ -1,17 +1,17 @@
 # Estado de auditoría, riesgos y decisiones pendientes
 
-**Fecha:** 12 de noviembre de 2026 (Australia/Brisbane)  
-**Estado general vigente:** Go fue elegido y el propietario autorizó el primer corte local, ya implementado y probado. La reconstrucción completa y las integraciones reales todavía no comenzaron. La segunda pasada de IA 2 fue en el mismo hilo y no equivale a revisión independiente.
+**Fecha:** 13 de noviembre de 2026 (Australia/Brisbane)
+**Estado general vigente:** la base Go se publicó y se desplegó en el equipo disponible, con API de eventos, SQLite versionada, panel PWA y lanzador de recuperación. Se preservó la base existente mediante un respaldo y se migró su historial sintético. La PC habitual está apagada; la validación real de Facebook sigue pendiente y no se ejecutó ninguna sesión en su ausencia. La segunda pasada de IA 2 fue en el mismo hilo y no equivale a revisión independiente.
 
-**Decisiones vigentes:** proyecto nuevo en Go, sin portar código; SocialStream Ninja excluido; los otros módulos siguen en alcance. La PC principal ejecutará Cortex, OBS, Spotify y captura; la notebook será control remoto en una etapa posterior. El primer corte usa feeds ficticios y base nueva; no toca el sistema anterior ni usa comentarios reales.
+**Decisiones vigentes:** proyecto nuevo en Go, sin portar código; SocialStream Ninja excluido; los otros módulos siguen en alcance. Mientras la PC habitual permanezca apagada, el equipo disponible aloja la instancia activa por Tailscale. Mantener una sola instancia escribiendo la base; planificar cualquier traslado con respaldo verificado. El usuario eligió conservar nombres/textos de Facebook hasta borrado manual. No se importan datos del sistema anterior.
 
-## Recomendación de continuación (propuesta, todavía no es una decisión)
+## Cierre de la base operativa
 
-1. El propietario descartó WebView2. Mantener el panel web en el navegador predeterminado; no agregar ese runtime ni una ventana integrada salvo que el propietario cambie su preferencia.
-2. Antes de guardar comentarios reales, versionar el esquema SQLite y diseñar/probar respaldo y restauración con datos sintéticos.
-3. Integrar después la captura de las dos cuentas de Facebook como primer flujo real. Revisar cómo funciona hoy la captura y escribir un adaptador nuevo; si Facebook requiere acceso desde el DOM del navegador, puede hacer falta un puente JavaScript pequeño mientras Go conserva la coordinación y persistencia. Mostrar salud de captura y hora del último comentario por cuenta.
-4. Probar un solo control reversible de OBS (por ejemplo, destacar un comentario en una fuente de ensayo). Incorporar Spotify y demás flujos luego; premios y acciones irreversibles al final, siempre con confirmación.
-5. Habilitar la notebook solo después de definir autenticación y acceso por red privada. El primer corte está ligado a loopback y no se debe exponer el WebSocket de OBS directamente.
+1. Confirmar estabilidad del despliegue actual y que el panel PWA abre por Tailscale.
+2. Cuando la PC habitual esté disponible, decidir si se traslada allí la instancia. Crear y verificar una copia; detener el host actual antes de iniciar el nuevo para evitar escrituras paralelas.
+3. En un equipo con acceso a Facebook, iniciar sesión manualmente y validar identidad, 2FA, aislamiento, persistencia y comentarios nuevos, sin solapar el Cortex anterior.
+4. Probar backup/restore con datos ficticios y recordar que los respaldos son copias separadas, sin cifrar.
+5. Después de aceptar la base, definir los cortes de OBS, Spotify, Rulo y demás módulos; las acciones de OBS siguen siendo de solo lectura y los otros módulos aún no están integrados.
 
 Conservar el programa viejo como respaldo hasta completar varias pruebas operativas del nuevo. Durante las pruebas reales, evitar que ambas versiones controlen a la vez las mismas cuentas, escenas o acciones para no duplicar eventos. Para secretos de producción, usar el almacén de credenciales de Windows o DPAPI, no archivos de configuración ni logs.
 
@@ -26,7 +26,7 @@ La matriz siguiente conserva el alcance de la auditoría documental original: �
 | OBS | Parcial | OBS 33.0.1, un perfil y archivos de plugin de la ruta dada. | No hay colección de escenas ni prueba en vivo; no se confirma qué fuentes usa Cortex. |
 | Windows y procesos | No auditado | No se inspeccionó el estado actual de procesos/servicios, tareas, firewall, drivers o dispositivos. | Necesarios para determinar dependencias, arranque y división entre PCs. |
 | Integraciones | Parcial | Documentación y código de conexiones Facebook, Spotify, OBS, Cdelu/Firebase, IAFAS/MySQL, IA, Tailscale/ngrok. | No se probaron conexiones, credenciales, contratos actuales ni recuperación de fallos. |
-| Datos y persistencia | Parcial | Esquemas y manuales localizados, sin abrir bases/filas ni archivos privados. | No se sabe qué datos quiere conservar el propietario; formato de importación no decidido. |
+| Datos y persistencia | Base nueva implementada; auditoría de datos heredados parcial | SQLite v1, registro general, deduplicación, backup/restore y borrado activo. No se abrieron ni importaron bases antiguas. | Desplegar y validar en escritorio; definir custodia de los respaldos no cifrados. |
 | Multimedia y recursos | Parcial | Referencias a clips, imágenes, perfiles de navegador y ejecutable externo en docs. | Assets fuera del repositorio, rutas, licencias y dependencias no inventariadas. |
 | Alcance de módulos | Confirmado por el propietario | Usa todos los módulos salvo SocialStream Ninja; pide excluir SSN y simplificar/unificar los demás. | Faltan frecuencia, secuencia y PC responsable por flujo. |
 | Flujo de directo | Parcialmente confirmado por el propietario | Inicio unificado, captura de dos cuentas, controles manuales, cierre y recuperación. | Pasos precisos, datos a persistir y significado de “reiniciar todo”. |
@@ -36,7 +36,7 @@ La matriz siguiente conserva el alcance de la auditoría documental original: �
 | Requisitos futuros | Parcial | El plan y documentación describen panel remoto, reconstrucción desde cero y controles. | Prioridad de funciones y alcance final deben confirmarse con el propietario. |
 | Seguridad | Parcial | AGENTS/docs indican controles y límites; se localizaron superficies LAN/OBS. | No se evaluaron firewall, permisos reales ni configuración activa. Revisar especialmente la operación de lotería por WebSocket y su alcance de red. |
 | Lenguaje | Go elegido y prototipo del primer corte probado | Go 1.27.4, pruebas automatizadas y smoke test del ejecutable. | Sin medición comparativa de rendimiento o estabilidad del producto completo. |
-| Aprobación y transición | Primer corte local autorizado y realizado; el resto sigue por aprobar por fases. | Decisiones posteriores del propietario e historial vigente en la tabla final. | No usar datos/cuentas reales ni reemplazar el sistema actual sin autorización específica. |
+| Aprobación y transición | Base operativa nueva autorizada; aceptación de instalación y módulos reales pendiente. | Decisiones posteriores del propietario e historial vigente en la tabla final. | No reemplazar el sistema actual ni cambiar escenas OBS sin aceptación específica. |
 
 ## Preguntas de operación que siguen abiertas
 
@@ -64,10 +64,10 @@ Sobre OBS, el propietario indicó revisar la carpeta local del perfil principal.
 |---|---|---|
 | Reconstruir el software de cero y no portar código | Instrucción confirmada por el propietario. | Propietario. |
 | Carpeta documental IA 1 | Asignada por el propietario. | Propietario. |
-| Implementación | Autorizado solo el primer corte nuevo y local, que ya fue probado; no incluye el Cortex actual ni cuentas/escenas reales. | Propietario decide cada siguiente fase. |
+| Implementación | Autorizado completar la base nueva; no reemplazar el Cortex anterior ni cambiar escenas OBS. | Propietario confirma cada cambio irreversible y aceptación del uso real. |
 | Lenguaje principal Go | Elegido por el propietario e implementado en el primer corte. | Mantener Go salvo que una limitación concreta y comprobada cambie la decisión. |
 | Arquitectura central | Aceptada para el primer corte: panel local y servidor interno gestionado por supervisor. | Confirmar ajustes de empaquetado/recuperación después de pruebas más largas. |
-| Importar/conservar datos antiguos | No decidido; no se asume. | Propietario. |
+| Datos históricos del Cortex anterior | No se importan. Comentarios capturados nuevos: nombres/textos hasta borrado manual de la base activa; respaldos con ciclo de vida separado. | Propietario. |
 | Retirar funciones | Excluir SocialStream Ninja; conservar las demás capacidades por confirmación del propietario. | Propietario puede cambiar el alcance. |
 | Reemplazar OBS/Cortex actual | No autorizado. | Propietario después de aceptación real. |
 

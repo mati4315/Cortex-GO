@@ -1,0 +1,27 @@
+{
+  "id": "/",
+  "name": "Cortex Go · Control central",
+  "short_name": "Cortex Go",
+  "description": "Panel central de Cortex Go",
+  "lang": "es",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#0c1018",
+  "theme_color": "#0c1018",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

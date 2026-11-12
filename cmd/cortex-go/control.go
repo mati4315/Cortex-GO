@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-//go:embed web/index.html
+//go:embed web
 var webFiles embed.FS
 
 type controlServer struct {
@@ -33,15 +33,34 @@ func newControlServer(manager *processSupervisor, shutdown func()) http.Handler 
 	mux.HandleFunc("GET /healthz", control.handleHealth)
 	mux.HandleFunc("GET /api/status", control.handleStatus)
 	mux.HandleFunc("GET /api/events", control.proxy)
+	mux.HandleFunc("POST /api/events", control.proxy)
+	mux.HandleFunc("DELETE /api/events", control.proxy)
+	mux.HandleFunc("DELETE /api/events/{id}", control.proxy)
 	mux.HandleFunc("POST /api/simulate/comment", control.proxy)
 	mux.HandleFunc("POST /api/backup", control.proxy)
+	mux.HandleFunc("GET /api/backups", control.proxy)
+	mux.HandleFunc("DELETE /api/backups", control.proxy)
+	mux.HandleFunc("DELETE /api/backups/{name}", control.proxy)
 	mux.HandleFunc("POST /api/restore", control.proxy)
 	mux.HandleFunc("POST /api/feeds/{id}/disconnect", control.proxy)
 	mux.HandleFunc("POST /api/feeds/{id}/reconnect", control.proxy)
+	mux.HandleFunc("POST /api/feeds/{id}/status", control.proxy)
 	mux.HandleFunc("POST /api/worker/restart", control.handleRestart)
 	mux.HandleFunc("POST /api/shutdown", control.handleShutdown)
 	mux.HandleFunc("GET /api/git/preview", control.handleGitPreview)
 	mux.HandleFunc("POST /api/git/publish", control.handleGitPublish)
+	mux.HandleFunc("GET /manifest.webmanifest", func(w http.ResponseWriter, r *http.Request) {
+		serveWebAsset(w, r, "web/manifest.webmanifest", "application/manifest+json; charset=utf-8", "no-cache")
+	})
+	mux.HandleFunc("GET /sw.js", func(w http.ResponseWriter, r *http.Request) {
+		serveWebAsset(w, r, "web/sw.js", "text/javascript; charset=utf-8", "no-cache")
+	})
+	mux.HandleFunc("GET /icons/icon-192.png", func(w http.ResponseWriter, r *http.Request) {
+		serveWebAsset(w, r, "web/icons/icon-192.png", "image/png", "public, max-age=86400")
+	})
+	mux.HandleFunc("GET /icons/icon-512.png", func(w http.ResponseWriter, r *http.Request) {
+		serveWebAsset(w, r, "web/icons/icon-512.png", "image/png", "public, max-age=86400")
+	})
 	mux.HandleFunc("GET /", control.handleIndex)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Cortex-Go-Control-Plane", "1")
@@ -74,6 +93,20 @@ func (c *controlServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(content)
+}
+
+func serveWebAsset(w http.ResponseWriter, r *http.Request, file, contentType, cacheControl string) {
+	content, err := webFiles.ReadFile(file)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", cacheControl)
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(content)
+	}
 }
 
 func (c *controlServer) handleStatus(w http.ResponseWriter, r *http.Request) {

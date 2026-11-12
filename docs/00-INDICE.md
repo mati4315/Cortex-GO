@@ -1,9 +1,9 @@
 # Cortex Go — Índice del proyecto
 
-**Fecha de actualización:** 12 de noviembre de 2026 (Australia/Brisbane)  
+**Fecha de actualización:** 13 de noviembre de 2026 (Australia/Brisbane)
 **Proyecto nuevo:** Cortex Go  
-**Estado general:** Go fue elegido por el propietario; el primer corte local está implementado, compilado y probado. El proyecto se crea desde cero y no porta código del Cortex anterior. SocialStream Ninja queda excluido; los demás módulos continúan en alcance.  
-**Límite vigente:** el permiso cubre el primer corte local. No se conectaron cuentas reales, no se importaron datos ni se modificaron el Cortex anterior o las escenas de OBS.
+**Estado general:** la base Go está publicada y desplegada en el equipo disponible, con PWA, lanzador de recuperación, SQLite versionada y API de eventos. La PC habitual está apagada; su traslado y la aceptación de Facebook real requieren que vuelva a estar disponible. El proyecto se crea desde cero y no porta código del Cortex anterior. SocialStream Ninja queda excluido; los demás módulos continúan en alcance.
+**Límite vigente:** el propietario autorizó terminar la base. Las sesiones reales de Facebook requieren autenticación manual; no se importaron datos antiguos, no se modificó el Cortex anterior ni se cambiaron escenas de OBS.
 
 ## Orden de lectura
 
@@ -20,6 +20,8 @@
 11. [10 — Flujo operativo real y referencias visuales](10-FLUJO-OPERATIVO-REAL.md)
 12. [11 — Primer corte técnico](11-PRIMER-CORTE-PRUEBA-TECNICA.md)
 13. [12 — Sincronización entre la PC y la notebook](12-SINCRONIZACION-ENTRE-PC.md)
+14. [13 — Guía para capturar comentarios de dos directos de Facebook](13-GUIA-CAPTURA-COMENTARIOS-FACEBOOK.md)
+15. [14 — Estado de la base operativa](14-BASE-OPERATIVA.md)
 
 ## Estado de los documentos
 
@@ -29,15 +31,17 @@
 | 01-AUDITORIA-CORTEX-ACTUAL.md | Parcial | Estructura, componentes, datos documentados e integraciones. |
 | 02-AUDITORIA-OBS.md | Parcial | OBS 33.0.1 y el perfil indicado; no se encontraron escenas. |
 | 03-INVENTARIO-FUNCIONAL-Y-MATRIZ.md | Parcial, revisado | Incluye alcance sin SSN, hotkeys OBS y UpCloud; frecuencia/PC pendiente. |
-| 04-REQUISITOS-Y-DECISION-TECNOLOGICA.md | Decisión Go registrada | Go elegido; primer corte probado, producto completo aún sin medir. |
-| 05-ARQUITECTURA-Y-PLAN-POR-FASES.md | Estado de fases actualizado | Primer corte implementado; fases reales pendientes. |
-| 06-ESTADO-Y-PENDIENTES.md | Actualizado | Decisiones, pendientes y recomendaciones de continuación. |
+| 04-REQUISITOS-Y-DECISION-TECNOLOGICA.md | Decisión Go registrada | Go elegido; código de la base actualizado, producto completo aún sin medir. |
+| 05-ARQUITECTURA-Y-PLAN-POR-FASES.md | Actualizado al estado de la base | PWA, lanzador, SQLite v1 y prototipo Facebook; despliegue en el equipo disponible. |
+| 06-ESTADO-Y-PENDIENTES.md | Actualizado | Decisiones y validaciones que requieren acceso a Facebook o al equipo habitual. |
 | 07-ORGANIZACION-PREVIA-Y-DIAGRAMAS.md | Propuesta revisada | Agrupación funcional, diagramas Mermaid y estrategias previas al código. |
 | 08-TRASPASO-ENTRE-IA.md | Histórico, actualizado | Entrega inicial con enlace al estado vigente. |
 | 09-DICTAMEN-IA2.md | Revisión histórica | Dictamen previo al prototipo; incluye aviso de vigencia. |
 | 10-FLUJO-OPERATIVO-REAL.md | Requisitos del propietario | Inicio mínimo, chequeo de dos cuentas, controles manuales, cierre y recuperación; referencias visuales. |
-| 11-PRIMER-CORTE-PRUEBA-TECNICA.md | Implementado y probado | Supervisor, panel local, feeds sintéticos, SQLite y OBS de solo lectura. |
-| 12-SINCRONIZACION-ENTRE-PC.md | Flujo público registrado; flujo privado pendiente de implementar | GitHub para código limpio; Syncthing propuesto para una copia privada cifrada y optativa. |
+| 11-PRIMER-CORTE-PRUEBA-TECNICA.md | Histórico del primer corte | Supervisor interno, feeds sintéticos, SQLite inicial y OBS de solo lectura. |
+| 12-SINCRONIZACION-ENTRE-PC.md | Actualizado al host disponible | Una sola instancia mantiene la base activa; acceso remoto por Tailscale. No sincronizar SQLite activa; copias cifradas y Syncthing siguen pendientes y optativos. |
+| 13-GUIA-CAPTURA-COMENTARIOS-FACEBOOK.md | Captura prototipada; validación manual pendiente | El [prototipo de dos perfiles](../experiments/facebook-browser-poc/README.md) envía eventos nuevos al API local; faltan login/2FA y aceptación en la PC principal. |
+| 14-BASE-OPERATIVA.md | Base publicada y desplegada | Resume el despliegue y las comprobaciones realizadas; la autenticación de Facebook y aceptación de la PC habitual quedan pendientes. |
 
 ## Proyecto y publicación
 
@@ -54,14 +58,14 @@
 | Código/dependencias Cortex | Parcial | Estructura, manifiestos y documentación; búsquedas de rutas y bases. | Revisar detalles funcionales y relaciones de todos los módulos. |
 | OBS | Parcial | OBS 33.0.1, perfil de salida y DLL presentes. | Colecciones, fuentes, scripts de usuario, WebSocket activo y uso real. |
 | Flujo real | Parcial, ampliado por el propietario | Pasos antes/durante/después, recuperación deseada, PC principal y notebook remota. | Escenas/fuentes exactas, semántica de acciones manuales y criterio de datos por guardar. |
-| Windows/operación | No verificado | No se consultaron procesos ni tareas actuales. | Dependencias, arranque, dispositivos, firewall y roles de PCs. |
+| Windows/operación | Parcial | Go compila para Windows; lanzador y PWA implementados. La PC principal aparece desconectada. | Desplegar, validar recuperación, Tailscale Serve y uso desde la notebook. |
 | Integraciones | Parcial | Documentación/código identifica Spotify, Facebook, OBS, Cdelu/Firebase, IAFAS/MySQL, IA y red privada. | No se probaron conexiones ni recuperación. |
-| Datos/persistencia | Parcial | Esquemas/manuales examinados, datos productivos no abiertos. | Decidir si se conservará o importará algún dato. |
+| Datos/persistencia | Base implementada en código | SQLite v1, eventos generales, deduplicación, backup/restore y borrado manual; no se importan datos antiguos. | Despliegue y validación en el escritorio; respaldos aún sin cifrar. |
 | Alcance de módulos | Confirmado por el propietario | Usa todos salvo SocialStream Ninja; simplificar y unificar los demás. | Frecuencia y PC responsable por flujo pendientes. |
 | SocialStream Ninja | Excluido | El propietario confirma que no lo usa y pide eliminarlo del diseño nuevo. | Revisar dependencias heredadas antes de desarrollo. |
 | Rendimiento real | No verificado | No se midió. | Mediciones comparables solo si el propietario aprueba la prueba. |
 | Lenguaje | Go elegido por el propietario para el núcleo | Recomendación IA 2; no hay mediciones de estabilidad. El panel/extensión se reescriben con tecnologías de navegador. | Validar en un primer corte el supervisor, recuperación, captura multicuenta y empaquetado. |
-| Implementación/reemplazo | No autorizado | No se inició código nuevo; este trabajo solo actualizó Markdown. | Decisión expresa del propietario tras revisar pendientes y dictamen IA 2. |
+| Implementación/reemplazo | Base nueva autorizada; reemplazo no realizado | Núcleo, SQLite v1, PWA y prototipo Facebook compilan; Cortex anterior y escenas OBS siguen intactos. | Despliegue y validación manual en la PC principal; login/2FA y captura real pendientes. |
 
 ## Criterio de evidencia
 
@@ -87,6 +91,11 @@ Las afirmaciones se marcan como **Confirmado**, **Probable**, **Hipótesis**, **
 | 2026-11-12 | Propuesto el primer corte técnico de Go con criterios de aceptación. | Validar recuperación y operación central antes de construir los módulos completos. |
 | 2026-11-12 | Implementado el primer corte: supervisor, panel local, feeds de prueba, SQLite sintética y sesión OBS de solo lectura; pruebas automatizadas añadidas. | El proceso central se mantiene separado del servidor supervisado; Facebook real y módulos de directo siguen fuera del corte. |
 | 2026-11-12 | Actualizados los estados de arquitectura, decisiones y traspaso para reflejar la autorización y la prueba del primer corte. | Las instrucciones antiguas de IA 1/IA 2 quedan como antecedente; prevalecen los documentos 05, 06 y 11 vigentes. |
+| 2026-11-12 | Corregida la guía de Facebook: se descarta la API oficial y se documenta la captura DOM como referencia del Cortex anterior. | Se revisaron la extensión, los perfiles separados por cuenta, la apertura de Live Producer y las señales de estado; la reconstrucción seguirá siendo desde cero. |
+| 2026-11-12 | Preparado un prototipo aislado con dos perfiles Edge/Brave, DevTools local y observador DOM; compilación correcta. | Iniciar la prueba de sesiones separadas sin copiar la extensión vieja; faltan login/2FA y persistencia manual, y evaluar CEF antes de integrar al Cortex principal. |
+| 2026-11-13 | Terminada la base en código: lanzador de recuperación, SQLite v1 con eventos y deduplicación, retención manual de historial y respaldos, métricas de captura, PWA y puente local para el prototipo de dos cuentas. | Dejar listas las fundaciones antes de continuar con los módulos; las cuentas reales no se validaron. |
+| 2026-11-13 | Confirmado el escritorio como host principal y la retención de comentarios hasta borrado manual. | La PC sigue desconectada; la notebook actuará como cliente Tailscale y los respaldos tienen un ciclo de vida independiente. |
+| 2026-11-13 | Documentado el estado real de la base y los pendientes de despliegue en documentos 05, 06, 12, 13 y 14. | Evitar presentar como validado lo que requiere acceso a la PC de escritorio o autenticación manual. |
 
 
 
