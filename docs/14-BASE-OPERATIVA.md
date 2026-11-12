@@ -15,7 +15,7 @@
 
 ### Arranque y recuperación
 
-El ejecutable arranca un lanzador oculto que inicia y supervisa el servidor local. Si el proceso termina con error, el lanzador registra el motivo y hace hasta cinco reintentos con espera limitada. Un cierre normal desde el panel cierra ambos procesos. No se instala como servicio de Windows ni configura inicio automático al iniciar sesión; si se cierra también el lanzador, el usuario debe abrir Cortex de nuevo.
+El ejecutable arranca un lanzador oculto que inicia y supervisa el servidor local. Si el proceso termina con error, el lanzador registra el motivo y hace hasta cinco reintentos con espera limitada. Un cierre normal desde el panel cierra ambos procesos. En el host desplegado, un acceso directo de inicio por usuario ejecuta Cortex al iniciar sesión en Windows; no se instala como servicio y esta configuración local no se distribuye con el repositorio.
 
 ### API y datos
 
