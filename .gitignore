@@ -1,0 +1,21 @@
+/bin/
+/.cache/
+/build/
+/dist/
+/data/
+/logs/
+*.exe
+*.log
+.env
+.env.*
+!.env.example
+img programa real/
+*.sqlite
+*.sqlite3
+*.db
+*.pem
+*.key
+*.pfx
+*.p12
+*.kdbx
+*.age
