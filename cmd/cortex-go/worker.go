@@ -5,12 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 )
+
+const maxBackupUploadBytes = 128 << 20
 
 type feedStatus struct {
 	ID          string `json:"id"`
@@ -43,6 +48,7 @@ type workerService struct {
 	startedAt string
 	probe     func(context.Context) obsStatus
 
+	storageMu sync.Mutex
 	mu        sync.RWMutex
 	feeds     map[string]feedStatus
 	obs       obsStatus
@@ -110,12 +116,16 @@ func (s *workerService) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("POST /api/simulate/comment", s.handleSimulatedComment)
+	mux.HandleFunc("POST /api/backup", s.handleBackup)
+	mux.HandleFunc("POST /api/restore", s.handleRestore)
 	mux.HandleFunc("POST /api/feeds/{id}/disconnect", s.handleFeedDisconnect)
 	mux.HandleFunc("POST /api/feeds/{id}/reconnect", s.handleFeedReconnect)
 	mux.HandleFunc("POST /internal/shutdown", s.handleShutdown)
 }
 
 func (s *workerService) handleStatus(w http.ResponseWriter, r *http.Request) {
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 	total, err := s.store.Total(ctx)
@@ -165,6 +175,8 @@ func (s *workerService) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *workerService) handleEvents(w http.ResponseWriter, r *http.Request) {
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 	events, err := s.store.Recent(ctx, 100)
@@ -176,6 +188,8 @@ func (s *workerService) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *workerService) handleSimulatedComment(w http.ResponseWriter, r *http.Request) {
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
 	var input struct {
 		FeedID  string `json:"feedId"`
 		Author  string `json:"author"`
@@ -219,6 +233,126 @@ func (s *workerService) handleSimulatedComment(w http.ResponseWriter, r *http.Re
 	s.lastSaved = event.CreatedAt
 	s.mu.Unlock()
 	writeJSON(w, http.StatusCreated, map[string]any{"event": event})
+}
+
+func (s *workerService) handleBackup(w http.ResponseWriter, r *http.Request) {
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+
+	fileName, _, err := s.createLocalBackup(ctx)
+	if err != nil {
+		http.Error(w, "No se pudo crear y validar el respaldo local: "+err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{
+		"fileName": fileName,
+		"location": filepath.Join("backups", fileName),
+		"state":    "created",
+	})
+}
+
+func (s *workerService) handleRestore(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBackupUploadBytes)
+	if err := r.ParseMultipartForm(2 << 20); err != nil {
+		http.Error(w, "Archivo inválido o superior al límite de 128 MiB", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	file, header, err := r.FormFile("backup")
+	if err != nil {
+		http.Error(w, "Seleccioná un archivo de respaldo SQLite", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+	if header.Size > maxBackupUploadBytes {
+		http.Error(w, "El respaldo supera el límite de 128 MiB", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	backupDirectory := filepath.Join(filepath.Dir(s.store.path), "backups")
+	if err := os.MkdirAll(backupDirectory, 0o700); err != nil {
+		http.Error(w, "No se pudo preparar la carpeta local de respaldos", http.StatusInternalServerError)
+		return
+	}
+	temporary, err := os.CreateTemp(backupDirectory, ".restore-upload-*.sqlite")
+	if err != nil {
+		http.Error(w, "No se pudo preparar el archivo de restauración", http.StatusInternalServerError)
+		return
+	}
+	temporaryPath := temporary.Name()
+	defer removeSQLiteFiles(temporaryPath)
+	bytesCopied, copyErr := io.Copy(temporary, io.LimitReader(file, maxBackupUploadBytes+1))
+	closeErr := temporary.Close()
+	if copyErr != nil || closeErr != nil {
+		http.Error(w, "No se pudo leer el archivo de respaldo", http.StatusBadRequest)
+		return
+	}
+	if bytesCopied > maxBackupUploadBytes {
+		http.Error(w, "El respaldo supera el límite de 128 MiB", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if bytesCopied == 0 {
+		http.Error(w, "El archivo de respaldo está vacío", http.StatusBadRequest)
+		return
+	}
+	if err := validateSQLiteSnapshot(ctx, temporaryPath); err != nil {
+		http.Error(w, "El archivo no es un respaldo SQLite válido para Cortex Go", http.StatusUnprocessableEntity)
+		return
+	}
+
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	fileName, _, err := s.createLocalBackup(ctx)
+	if err != nil {
+		http.Error(w, "No se pudo guardar la copia previa a la restauración: "+err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.store.Restore(ctx, temporaryPath); err != nil {
+		http.Error(w, "No se pudo restaurar el respaldo; la copia previa se conservó en backups\\"+fileName+": "+err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+
+	s.mu.Lock()
+	s.lastSaved = ""
+	for _, id := range []string{"a", "b"} {
+		feed := s.feeds[id]
+		feed.LastEventAt = ""
+		s.feeds[id] = feed
+	}
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]string{
+		"state":             "restored",
+		"restoredFile":      filepath.Base(header.Filename),
+		"beforeRestoreFile": fileName,
+	})
+}
+
+func (s *workerService) createLocalBackup(ctx context.Context) (fileName, path string, err error) {
+	backupDirectory := filepath.Join(filepath.Dir(s.store.path), "backups")
+	if err := os.MkdirAll(backupDirectory, 0o700); err != nil {
+		return "", "", fmt.Errorf("preparar carpeta local: %w", err)
+	}
+	timestamp := time.Now().UTC().Format("20060102-150405-000000000")
+	for sequence := 0; sequence < 1000; sequence++ {
+		fileName = fmt.Sprintf("CortexGo-%s-%03d.sqlite", timestamp, sequence)
+		path = filepath.Join(backupDirectory, fileName)
+		err := s.store.Backup(ctx, path)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", "", err
+		}
+		return fileName, path, nil
+	}
+	return "", "", errors.New("no se pudo reservar un nombre único para el respaldo")
 }
 
 func (s *workerService) handleFeedDisconnect(w http.ResponseWriter, r *http.Request) {

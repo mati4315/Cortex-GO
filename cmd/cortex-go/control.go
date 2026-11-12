@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -17,6 +19,7 @@ type controlServer struct {
 	manager  *processSupervisor
 	shutdown func()
 	client   *http.Client
+	gitSync  *gitSyncManager
 }
 
 func newControlServer(manager *processSupervisor, shutdown func()) http.Handler {
@@ -24,16 +27,21 @@ func newControlServer(manager *processSupervisor, shutdown func()) http.Handler 
 		manager:  manager,
 		shutdown: shutdown,
 		client:   &http.Client{Timeout: 2500 * time.Millisecond},
+		gitSync:  newGitSyncManager(discoverProjectRoot(), findGitExecutable()),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", control.handleHealth)
 	mux.HandleFunc("GET /api/status", control.handleStatus)
 	mux.HandleFunc("GET /api/events", control.proxy)
 	mux.HandleFunc("POST /api/simulate/comment", control.proxy)
+	mux.HandleFunc("POST /api/backup", control.proxy)
+	mux.HandleFunc("POST /api/restore", control.proxy)
 	mux.HandleFunc("POST /api/feeds/{id}/disconnect", control.proxy)
 	mux.HandleFunc("POST /api/feeds/{id}/reconnect", control.proxy)
 	mux.HandleFunc("POST /api/worker/restart", control.handleRestart)
 	mux.HandleFunc("POST /api/shutdown", control.handleShutdown)
+	mux.HandleFunc("GET /api/git/preview", control.handleGitPreview)
+	mux.HandleFunc("POST /api/git/publish", control.handleGitPublish)
 	mux.HandleFunc("GET /", control.handleIndex)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Cortex-Go-Control-Plane", "1")
@@ -108,7 +116,11 @@ func (c *controlServer) proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.Header.Set("Content-Type", r.Header.Get("Content-Type"))
-	response, err := c.client.Do(request)
+	client := c.client
+	if r.URL.Path == "/api/backup" || r.URL.Path == "/api/restore" {
+		client = &http.Client{Timeout: 2 * time.Minute}
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		http.Error(w, "El servidor interno está reiniciando; probá de nuevo en unos segundos", http.StatusServiceUnavailable)
 		return
@@ -133,11 +145,62 @@ func (c *controlServer) handleShutdown(w http.ResponseWriter, _ *http.Request) {
 	go c.shutdown()
 }
 
+func (c *controlServer) handleGitPreview(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	preview, err := c.gitSync.Preview(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
+func (c *controlServer) handleGitPublish(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var input gitPublishRequest
+	if err := decoder.Decode(&input); err != nil {
+		http.Error(w, "La confirmación de publicación no es válida", http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		http.Error(w, "La confirmación de publicación contiene datos adicionales", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	result, err := c.gitSync.Publish(ctx, input)
+	if err != nil {
+		if result.State == "committed_not_pushed" {
+			http.Error(w, result.Message+" Commit: "+result.Commit+". Error de Git: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		status := http.StatusUnprocessableEntity
+		if strings.Contains(err.Error(), "cambiaron desde la revisión") || strings.Contains(err.Error(), "lista de archivos a publicar cambió") {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func sameOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return true // clientes locales de automatización pueden no enviar Origin
 	}
 	parsed, err := url.Parse(origin)
-	return err == nil && parsed.Scheme == "http" && strings.EqualFold(parsed.Host, r.Host)
+	if err != nil {
+		return false
+	}
+	if parsed.Scheme == "http" && strings.EqualFold(parsed.Host, r.Host) {
+		return true
+	}
+	return parsed.Scheme == "https" &&
+		strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") &&
+		strings.EqualFold(parsed.Host, r.Header.Get("X-Forwarded-Host")) &&
+		r.Header.Get("Tailscale-User-Login") != ""
 }

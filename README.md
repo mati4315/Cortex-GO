@@ -33,6 +33,10 @@ go build -ldflags="-H=windowsgui" -o .\bin\CortexGo.exe .\cmd\cortex-go
 
 Después, iniciar `bin\CortexGo.exe`. El ejecutable permite `--no-browser`, `--listen 127.0.0.1:17845` y `--data-dir <carpeta>` para pruebas controladas. El panel se limita a loopback y no está expuesto a la notebook ni a la red local.
 
+En el panel, la sección **Respaldo local de SQLite** permite crear un respaldo en `<carpeta de datos>\backups` o elegir un archivo `.sqlite`/`.db` para restaurarlo. Antes de restaurar, Cortex Go conserva automáticamente una copia de la base actual en esa misma carpeta. Esta función solo administra la base sintética de prueba; todavía no cifra ni sincroniza archivos con la notebook.
+
+La sección **Publicar código en GitHub** revisa los cambios de `main`, muestra el diff y solicita confirmación antes de crear un commit y hacer Push al remoto público `mati4315/Cortex-GO`. Solo permite revisar `README.md`, `go.mod`, `go.sum`, código Go/HTML de `cmd/cortex-go/` y Markdown de `docs/`; bloquea archivos preparados previamente, commits locales pendientes, ramas atrasadas y tipos de archivo fuera de esa lista. El botón no publica nada hasta que se confirme en el panel.
+
 ## Qué verifica y qué no
 
 - El supervisor comprueba la salud del servidor interno cada segundo. Tras tres comprobaciones fallidas consecutivas lo reinicia; aplica esperas de 1, 2, 4 y 8 segundos, con hasta cinco reintentos automáticos antes de pedir intervención. El botón permite solicitar un reinicio manual.

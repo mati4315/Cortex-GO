@@ -8,8 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 type syntheticEvent struct {
@@ -20,9 +18,17 @@ type syntheticEvent struct {
 	CreatedAt string `json:"createdAt"`
 }
 
-type eventStore struct{ db *sql.DB }
+type eventStore struct {
+	db   *sql.DB
+	path string
+}
 
 func openEventStore(path string) (*eventStore, error) {
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolver ruta de SQLite: %w", err)
+	}
+	path = filepath.Clean(absolutePath)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("preparar carpeta de datos: %w", err)
 	}
@@ -55,7 +61,7 @@ func openEventStore(path string) (*eventStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("comprobar SQLite: %w", err)
 	}
-	return &eventStore{db: db}, nil
+	return &eventStore{db: db, path: path}, nil
 }
 
 func (s *eventStore) Close() error { return s.db.Close() }
