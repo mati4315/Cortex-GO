@@ -515,6 +515,14 @@ func publishablePath(path string) bool {
 				return false
 			}
 		}
+		if strings.HasPrefix(clean, "cmd/cortex-go/web/lights/") {
+			switch strings.ToLower(filepath.Ext(clean)) {
+			case ".html", ".css", ".js":
+				return true
+			default:
+				return false
+			}
+		}
 		if strings.HasPrefix(clean, "cmd/cortex-go/") {
 			extension := strings.ToLower(filepath.Ext(clean))
 			return extension == ".go"

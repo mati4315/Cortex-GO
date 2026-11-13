@@ -2,8 +2,8 @@
 
 **Fecha de actualización:** 13 de noviembre de 2026 (Australia/Brisbane)
 **Proyecto nuevo:** Cortex Go  
-**Estado general:** la base Go está publicada y desplegada en el equipo disponible, con PWA, lanzador de recuperación, SQLite versionada y API de eventos. El módulo Bienvenidos y Banner está integrado; su aceptación visual con OBS requiere la computadora que ejecuta OBS. La PC habitual está apagada; su eventual traslado y la aceptación de Facebook real también esperan que vuelva a estar disponible. SocialStream Ninja queda excluido; los demás módulos continúan en alcance.
-**Límite vigente:** no se importaron configuraciones privadas, perfiles, sesiones ni medios personales del Cortex anterior y no se modificó esa instalación. Las sesiones reales de Facebook requieren autenticación manual. La transición OBS del nuevo módulo es local y opcional; empieza desactivada.
+**Estado general:** la base Go está publicada y desplegada en el equipo disponible, con PWA, lanzador de recuperación, SQLite versionada y API de eventos. Bienvenidos y Banner y Luces están integrados; la aceptación de OBS requiere la computadora que ejecuta OBS. La PC habitual está apagada; su eventual traslado y la aceptación de Facebook real también esperan que vuelva a estar disponible. SocialStream Ninja queda excluido; los demás módulos continúan en alcance.
+**Límite vigente:** no se importaron configuraciones privadas, perfiles, sesiones ni medios personales del Cortex anterior y no se modificó esa instalación. Las sesiones reales de Facebook requieren autenticación manual. Luces genera un overlay visual y no controla hardware DMX. El cambio de escena de Bienvenidos y Banner es local y opcional; empieza desactivado.
 
 ## Orden de lectura
 
@@ -23,6 +23,7 @@
 14. [13 — Guía para capturar comentarios de dos directos de Facebook](13-GUIA-CAPTURA-COMENTARIOS-FACEBOOK.md)
 15. [14 — Estado de la base operativa](14-BASE-OPERATIVA.md)
 16. [15 — Módulo Bienvenidos y Banner](15-MODULO-BIENVENIDOS-Y-BANNER.md)
+17. [16 — Módulo Luces](16-MODULO-LUCES.md)
 
 ## Estado de los documentos
 
@@ -44,10 +45,11 @@
 | 13-GUIA-CAPTURA-COMENTARIOS-FACEBOOK.md | Captura prototipada; validación manual pendiente | El [prototipo de dos perfiles](../experiments/facebook-browser-poc/README.md) envía eventos nuevos al API local; faltan login/2FA y aceptación en la PC principal. |
 | 14-BASE-OPERATIVA.md | Base publicada y desplegada | Resume el despliegue y las comprobaciones realizadas; la autenticación de Facebook y aceptación de la PC habitual quedan pendientes. |
 | 15-MODULO-BIENVENIDOS-Y-BANNER.md | Integrado en Go | URLs, controles, persistencia SQLite v2, OBS local opcional y validación visual pendiente. |
+| 16-MODULO-LUCES.md | Integrado en Go | Efectos Canvas, seis presets, configuración SQLite y sincronización en tiempo real; aceptación visual pendiente en OBS. |
 
 ## Proyecto y publicación
 
-- El servidor y persistencia se reconstruyen en Go. Para preservar la fidelidad, Bienvenidos y Banner adapta hojas de estilo, scripts de overlay y recursos gráficos del módulo viejo; `.env`, configuraciones, cuentas, sesiones y medios personales quedan fuera. Las rutas de las instalaciones locales se omiten de esta copia pública.
+- El servidor y persistencia se reconstruyen en Go. Para preservar la fidelidad, Bienvenidos y Banner adapta hojas de estilo, scripts de overlay y recursos gráficos; Luces conserva sus pantallas y renderizado Canvas con una API Go. `.env`, configuraciones, cuentas, sesiones y medios personales quedan fuera. Las rutas de las instalaciones locales se omiten de esta copia pública.
 - El propietario decidió mantener público el remoto de GitHub; se publican solo código y documentación revisados, sin bases, claves, datos privados ni capturas personales.
 - El primer commit limpio ya se publicó en la rama `main`. Las capturas y rutas locales quedan fuera del repositorio. Revisar [el plan de sincronización](12-SINCRONIZACION-ENTRE-PC.md).
 - El Cortex anterior permanece separado y sin cambios.
@@ -86,6 +88,7 @@ Las afirmaciones se marcan como **Confirmado**, **Probable**, **Hipótesis**, **
 | 2026-11-12 | Añadido el flujo operativo real y referencias visuales aportadas por el propietario. | Inicio mínimo, validación de dos cuentas, acciones manuales, cierre y recuperación. |
 | 2026-11-12 | Aclarado que “unificar” significa un único punto de inicio y supervisión, no necesariamente un solo proceso. | El propietario quiere evitar abrir y vigilar cada módulo por separado; los auxiliares deben quedar gestionados por Cortex. |
 | 2026-11-12 | Confirmada la PC actual y recomendado integrar Trigger Studio al panel central para el acceso remoto futuro. | La segunda PC puede ser solo cliente de control; un agente separado depende de si allí se ejecutan OBS o recursos locales. |
+| 2026-11-13 | Integrado el módulo Luces con configuración SQLite y eventos en tiempo real. | Portar los efectos, presets y controles del proyecto anterior sin su servidor Node ni su configuración privada. |
 | 2026-11-12 | Confirmado que la segunda PC será una notebook usada solo como control remoto. | No necesita OBS, backend ni agente local; usará el panel central de Cortex. |
 | 2026-11-12 | Go queda elegido para el núcleo/backend. | El propietario pregunta y acepta la recomendación IA 2; la elección de lenguaje no sustituye validar recuperación del proceso. |
 | 2026-11-12 | Registrada la incidencia del servidor central y el reinicio manual actual. | El primer corte Go debe incluir un supervisor que sobreviva al cierre del backend y documente la causa. |

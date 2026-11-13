@@ -62,6 +62,7 @@ type workerStatus struct {
 type workerService struct {
 	store     *eventStore
 	welcome   *welcomeService
+	lights    *lightsService
 	startedAt string
 	probe     func(context.Context) obsStatus
 
@@ -99,6 +100,10 @@ func runWorker(address, dbPath, parentURL string) error {
 	service.welcome, err = newWelcomeService(store, switchOBSSceneFromEnvironment)
 	if err != nil {
 		return fmt.Errorf("no se pudo preparar el módulo Bienvenidos y Banner: %w", err)
+	}
+	service.lights, err = newLightsService(store)
+	if err != nil {
+		return fmt.Errorf("no se pudo preparar el módulo Luces: %w", err)
 	}
 	mux := http.NewServeMux()
 	service.registerRoutes(mux)
@@ -157,6 +162,11 @@ func (s *workerService) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/modules/welcome/obs/transition", s.welcome.handleTransition)
 	mux.HandleFunc("POST /api/modules/welcome/upload/{kind}", s.welcome.handleUpload)
 	mux.HandleFunc("GET /api/modules/welcome/assets/{assetID}", s.welcome.handleAsset)
+	mux.HandleFunc("GET /api/modules/lights/state", s.lights.handleState)
+	mux.HandleFunc("GET /api/modules/lights/settings", s.lights.handleSettings)
+	mux.HandleFunc("PUT /api/modules/lights/settings", s.lights.handleSettings)
+	mux.HandleFunc("POST /api/modules/lights/beat", s.lights.handleBeat)
+	mux.HandleFunc("GET /api/modules/lights/events", s.lights.handleEvents)
 	mux.HandleFunc("POST /internal/shutdown", s.handleShutdown)
 }
 

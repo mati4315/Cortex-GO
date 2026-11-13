@@ -56,6 +56,9 @@ func newControlServer(manager *processSupervisor, shutdown func()) http.Handler 
 	mux.HandleFunc("GET /api/modules/welcome/", control.proxy)
 	mux.HandleFunc("PUT /api/modules/welcome/", control.proxy)
 	mux.HandleFunc("POST /api/modules/welcome/", control.proxy)
+	mux.HandleFunc("GET /api/modules/lights/", control.proxy)
+	mux.HandleFunc("PUT /api/modules/lights/", control.proxy)
+	mux.HandleFunc("POST /api/modules/lights/", control.proxy)
 	mux.HandleFunc("GET /modules/bienvenidos/admin", func(w http.ResponseWriter, r *http.Request) {
 		serveWelcomePage(w, r, "admin.html")
 	})
@@ -66,6 +69,13 @@ func newControlServer(manager *processSupervisor, shutdown func()) http.Handler 
 		serveWelcomePage(w, r, "banner.html")
 	})
 	mux.HandleFunc("GET /modules/bienvenidos/{resource...}", control.serveWelcomeAsset)
+	mux.HandleFunc("GET /modules/luces/admin", func(w http.ResponseWriter, r *http.Request) {
+		serveLightsPage(w, r, "dashboard.html")
+	})
+	mux.HandleFunc("GET /modules/luces/overlay", func(w http.ResponseWriter, r *http.Request) {
+		serveLightsPage(w, r, "overlay.html")
+	})
+	mux.HandleFunc("GET /modules/luces/{resource...}", control.serveLightsAsset)
 	mux.HandleFunc("GET /manifest.webmanifest", func(w http.ResponseWriter, r *http.Request) {
 		serveWebAsset(w, r, "web/manifest.webmanifest", "application/manifest+json; charset=utf-8", "no-cache")
 	})
@@ -109,6 +119,48 @@ func (c *controlServer) serveWelcomeAsset(w http.ResponseWriter, r *http.Request
 		return
 	}
 	serveWelcomeWebFile(w, r, "web/welcome/"+resource)
+}
+
+func serveLightsPage(w http.ResponseWriter, r *http.Request, file string) {
+	serveLightsWebFile(w, r, "web/lights/"+file)
+}
+
+func (c *controlServer) serveLightsAsset(w http.ResponseWriter, r *http.Request) {
+	resource := path.Clean("/" + r.PathValue("resource"))
+	resource = strings.TrimPrefix(resource, "/")
+	if resource == "" || resource == "." || strings.HasPrefix(resource, "../") || strings.Contains(resource, "\\") ||
+		(!strings.HasPrefix(resource, "js/") && !strings.HasPrefix(resource, "css/")) {
+		http.NotFound(w, r)
+		return
+	}
+	serveLightsWebFile(w, r, "web/lights/"+resource)
+}
+
+func serveLightsWebFile(w http.ResponseWriter, r *http.Request, file string) {
+	content, err := webFiles.ReadFile(file)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	contentType := mime.TypeByExtension(path.Ext(file))
+	if contentType == "" {
+		switch path.Ext(file) {
+		case ".html":
+			contentType = "text/html; charset=utf-8"
+		case ".css":
+			contentType = "text/css; charset=utf-8"
+		case ".js":
+			contentType = "text/javascript; charset=utf-8"
+		default:
+			contentType = "application/octet-stream"
+		}
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(content)
+	}
 }
 
 func serveWelcomeWebFile(w http.ResponseWriter, r *http.Request, file string) {
@@ -222,6 +274,8 @@ func (c *controlServer) proxy(w http.ResponseWriter, r *http.Request) {
 		client = &http.Client{Timeout: 2 * time.Minute}
 	} else if strings.HasPrefix(r.URL.Path, "/api/modules/welcome/assets/") {
 		client = &http.Client{Timeout: 2 * time.Minute}
+	} else if r.URL.Path == "/api/modules/lights/events" {
+		client = &http.Client{}
 	}
 	response, err := client.Do(request)
 	if err != nil {
@@ -235,7 +289,35 @@ func (c *controlServer) proxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(response.StatusCode)
+	if r.URL.Path == "/api/modules/lights/events" {
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+			_ = copyEventStream(w, response.Body, flusher)
+			return
+		}
+		http.Error(w, "La conexión no admite eventos en tiempo real", http.StatusInternalServerError)
+		return
+	}
 	_, _ = io.Copy(w, response.Body)
+}
+
+func copyEventStream(w http.ResponseWriter, source io.Reader, flusher http.Flusher) error {
+	buffer := make([]byte, 4096)
+	for {
+		read, readErr := source.Read(buffer)
+		if read > 0 {
+			if _, writeErr := w.Write(buffer[:read]); writeErr != nil {
+				return writeErr
+			}
+			flusher.Flush()
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				return nil
+			}
+			return readErr
+		}
+	}
 }
 
 func (c *controlServer) handleRestart(w http.ResponseWriter, _ *http.Request) {

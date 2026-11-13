@@ -1,17 +1,17 @@
 # Cortex Go
 
-Reconstrucción nueva de Cortex con servidor y almacenamiento en Go. Para el módulo Bienvenidos y Banner se adaptaron el diseño y los recursos visuales del módulo anterior; no se copiaron `.env`, configuraciones, cuentas, sesiones ni archivos multimedia personales.
+Reconstrucción nueva de Cortex con servidor y almacenamiento en Go. Bienvenidos y Banner y Luces adaptan los diseños de sus módulos anteriores; no se copiaron `.env`, configuraciones guardadas, cuentas, sesiones ni datos personales.
 
 ## Estado
 
-La base operativa está implementada en código: el lanzador recupera Cortex si el proceso principal termina inesperadamente; el servidor usa SQLite con esquema versionado, eventos, deduplicación y borrado manual; el panel es PWA y el primer módulo, **Bienvenidos y Banner**, ya está integrado en Go.
+La base operativa está implementada en código: el lanzador recupera Cortex si el proceso principal termina inesperadamente; el servidor usa SQLite con esquema versionado, eventos, deduplicación y borrado manual; el panel es PWA y **Bienvenidos y Banner** y **Luces** ya están integrados en Go.
 
-La captura Facebook es todavía un prototipo externo de Edge/Brave conectado al API local. La validación manual de login, 2FA, aislamiento y comentarios nuevos en la PC principal sigue pendiente. El panel central solo consulta OBS; Bienvenidos y Banner agrega un cambio de escena opcional, local y desactivado por defecto. Los demás módulos aún no se integran.
+La captura Facebook es todavía un prototipo externo de Edge/Brave conectado al API local. La validación manual de login, 2FA, aislamiento y comentarios nuevos en la PC principal sigue pendiente. El panel central solo consulta OBS; Bienvenidos y Banner agrega un cambio de escena local y opcional, desactivado por defecto. Luces genera efectos visuales para una fuente de navegador de OBS; no controla equipos DMX físicos.
 
 ## Estructura
 
 - `cmd/cortex-go/`: punto de entrada del ejecutable.
-- `cmd/cortex-go/web/`: panel central, recursos PWA y las pantallas del módulo Bienvenidos y Banner incluidos dentro del ejecutable.
+- `cmd/cortex-go/web/`: panel central, recursos PWA y pantallas de Bienvenidos y Banner y Luces incluidas dentro del ejecutable.
 - `experiments/facebook-browser-poc/`: prototipo aislado de captura de Facebook con dos perfiles separados.
 - `docs/`: auditoría, requisitos, arquitectura, guía de captura y [estado de la base operativa](docs/14-BASE-OPERATIVA.md).
 - Las capturas visuales de referencia se conservan localmente y quedan fuera del repositorio público.
@@ -44,11 +44,17 @@ El panel está en `http://127.0.0.1:17845/modules/bienvenidos/admin`. El overlay
 
 El módulo conserva el estilo neón/nebula, las partículas, los textos y colores editables, la fuente local Orbitron, logo, fondos, música, redes flotantes, banner rotativo y vista previa. Los archivos aceptados se validan por extensión y contenido, y se guardan como BLOB en SQLite para que entren en los respaldos. El contador funciona desde un único estado del servidor, guarda su hora de fin, se sincroniza entre panel y overlays y continúa correctamente tras recargar o reiniciar. Su límite visual es 99:59.
 
+## Luces
+
+El panel está en `http://127.0.0.1:17845/modules/luces/admin`; la fuente de navegador de OBS es `http://127.0.0.1:17845/modules/luces/overlay`. El overlay es transparente y se renderiza en un canvas a la resolución de la fuente de OBS. Las mismas rutas pueden abrirse desde un dispositivo autorizado por el host HTTPS de Tailscale Serve.
+
+Se conservaron los seis presets, el modo aleatorio, la paleta y colores personalizados, la bola de espejos, cabezales móviles, láseres, humo, wash y estrobo, además de BPM, tap tempo y pulso manual. El estrobo empieza apagado y su rango queda en 2–3 Hz. El beat virtual está activo por defecto; la captura de micrófono es opcional y solo se solicita al activar el modo audio-reactivo desde el overlay. La configuración se guarda en SQLite y se distribuye entre panel y overlays por eventos del servidor Go; no requiere Node, Socket.IO ni CDN. El Canvas y el análisis de audio se pausan cuando la página queda oculta.
+
 La conexión OBS usa `ws://127.0.0.1:4455` o una dirección `CORTEX_OBS_WS` que resuelva a loopback. Si OBS exige clave, Cortex la lee de `CORTEX_OBS_PASSWORD`; no la guarda en SQLite ni la muestra. La prueba de conexión es de lectura. El cambio manual de escena y la transición al llegar a cero requieren una escena configurada; la transición automática empieza desactivada. El acceso al panel remoto debe mantenerse restringido al tailnet de confianza.
 
 Para este despliegue, la instancia disponible queda como host activo mientras la otra PC está apagada. La notebook accede al mismo panel por Tailscale; no mantengas dos instancias escribiendo la misma base ni sincronices el SQLite activo entre equipos. Cuando vuelva a estar disponible la PC habitual, se puede planificar el traslado con un respaldo verificado.
 
-El panel central también se puede instalar como aplicación PWA desde un navegador compatible cuando se abre por HTTPS, por ejemplo mediante Tailscale Serve. El service worker guarda únicamente la carcasa estática del panel central; la interfaz de Bienvenidos y Banner y sus API requieren conexión con Cortex. En Chrome o Edge usa el botón **Instalar app** cuando aparezca o el control de instalación del navegador; en Safari de iOS, usa **Compartir → Añadir a pantalla de inicio**.
+El panel central también se puede instalar como aplicación PWA desde un navegador compatible cuando se abre por HTTPS, por ejemplo mediante Tailscale Serve. El service worker guarda únicamente la carcasa estática del panel central; las interfaces de Bienvenidos y Banner y Luces y sus API requieren conexión con Cortex. En Chrome o Edge usa el botón **Instalar app** cuando aparezca o el control de instalación del navegador; en Safari de iOS, usa **Compartir → Añadir a pantalla de inicio**.
 
 En el panel, **Respaldo local de SQLite** permite crear, restaurar y revisar los respaldos locales generados por Cortex Go; también permite borrar uno o todos con confirmación. Antes de restaurar, conserva automáticamente una copia de la base actual. Los respaldos no están cifrados ni se sincronizan. Borrar un comentario elimina la fila activa; si ya existe en respaldos, elimina también esos archivos desde la lista. Copias exportadas a otro lugar requieren su propio borrado.
 
@@ -84,4 +90,4 @@ go build -ldflags="-H=windowsgui" -o .\bin\CortexGo-Base.exe .\cmd\cortex-go
 
 ## Documentación
 
-Empieza por [`docs/00-INDICE.md`](docs/00-INDICE.md), consulta el [estado de la base operativa](docs/14-BASE-OPERATIVA.md), la [guía Bienvenidos y Banner](docs/15-MODULO-BIENVENIDOS-Y-BANNER.md), la [guía Facebook](docs/13-GUIA-CAPTURA-COMENTARIOS-FACEBOOK.md) y el [plan para PC y notebook](docs/12-SINCRONIZACION-ENTRE-PC.md). El primer corte técnico queda como antecedente en `docs/11-PRIMER-CORTE-PRUEBA-TECNICA.md`.
+Empieza por [`docs/00-INDICE.md`](docs/00-INDICE.md), consulta el [estado de la base operativa](docs/14-BASE-OPERATIVA.md), las guías de [Bienvenidos y Banner](docs/15-MODULO-BIENVENIDOS-Y-BANNER.md) y [Luces](docs/16-MODULO-LUCES.md), la [guía Facebook](docs/13-GUIA-CAPTURA-COMENTARIOS-FACEBOOK.md) y el [plan para PC y notebook](docs/12-SINCRONIZACION-ENTRE-PC.md). El primer corte técnico queda como antecedente en `docs/11-PRIMER-CORTE-PRUEBA-TECNICA.md`.
