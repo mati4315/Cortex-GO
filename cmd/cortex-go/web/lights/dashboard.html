@@ -128,7 +128,7 @@
             }
             body {
                 padding-right: 0.85rem;
-                padding-bottom: calc(100px + env(safe-area-inset-bottom, 0px));
+                padding-bottom: calc(170px + env(safe-area-inset-bottom, 0px));
                 padding-left: 0.85rem;
             }
             .save-bar {
@@ -138,9 +138,11 @@
             .preset-btn,
             .btn-gray,
             .btn-neon,
-            .btn-pink {
+            .btn-pink,
+            .btn-danger {
                 min-height: 44px;
             }
+            .save-status { flex: 1 1 100%; }
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -467,12 +469,44 @@
             border-top: 1px solid var(--border-color);
             z-index: 100;
             display: flex;
+            align-items: center;
             justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
             box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.7);
         }
-        .save-bar button {
-            width: 100%;
+        .save-bar #save-btn {
+            width: auto;
+            flex: 1 1 260px;
             max-width: 450px;
+        }
+        .save-bar #blackout-btn {
+            width: auto;
+            flex: 0 1 190px;
+            min-width: 150px;
+        }
+        .save-status {
+            min-width: 150px;
+            color: var(--text-muted);
+            font-size: 0.78rem;
+            text-align: center;
+        }
+        .save-status[data-state="saved"] { color: var(--neon-green); }
+        .save-status[data-state="saving"] { color: #fbbf24; }
+        .save-status[data-state="preview"] { color: var(--neon-blue); }
+        .save-status[data-state="error"] { color: #fb7185; }
+        .btn-danger {
+            border: 1px solid rgba(251, 113, 133, 0.42);
+            background: linear-gradient(135deg, #3b1020, #240b18);
+            color: #fecdd3;
+            box-shadow: 0 4px 15px rgba(244, 63, 94, 0.15);
+        }
+        .btn-danger:hover { border-color: #fb7185; color: #fff1f2; }
+        .btn-danger[aria-pressed="true"] {
+            border-color: #fb7185;
+            background: linear-gradient(135deg, #be123c, #881337);
+            color: #fff;
+            box-shadow: 0 0 18px rgba(244, 63, 94, 0.35);
         }
     </style>
 </head>
@@ -490,6 +524,9 @@
             </button>
             <a href="/modules/luces/overlay" target="_blank" rel="noopener" style="text-decoration: none;">
                 <button class="btn-neon">🔗 Abrir Overlay</button>
+            </a>
+            <a href="/modules/luces/overlay?debug=1" target="_blank" rel="noopener" style="text-decoration: none;">
+                <button class="btn-gray">🧪 Diagnóstico OBS</button>
             </a>
         </div>
     </div>
@@ -851,25 +888,47 @@
 
     <!-- BOTON GUARDAR FIJO (FOOTER) -->
     <div class="save-bar">
-        <button id="save-btn" class="btn-neon">💾 Guardar Configuración</button>
+        <button id="blackout-btn" class="btn-danger" type="button" aria-pressed="false">⏻ Blackout</button>
+        <button id="save-btn" class="btn-neon" type="button">💾 Guardar Configuración</button>
+        <span id="save-status" class="save-status" data-state="ready" role="status" aria-live="polite">Conectando…</span>
     </div>
 
     <script src="/modules/luces/js/lights-bridge.js"></script>
     <script>
         let socket = null;
-        
-        // Debounce utility to prevent flooding server with slide changes
-        function debounce(func, delay) {
-            let timeout;
-            return function(...args) {
-                clearTimeout(timeout);
-                timeout = setTimeout(() => func.apply(this, args), delay);
-            };
+        let scheduledConfigPreview = null;
+        let latestSaveRevision = 0;
+        let latestPreviewRevision = 0;
+        let initialConfigReceived = false;
+        let pendingConfigCommit = false;
+
+        function setSaveStatus(state, text) {
+            const status = document.getElementById('save-status');
+            status.dataset.state = state;
+            status.textContent = text;
         }
-        
-        const debouncedUpdate = debounce(() => {
-            sendConfigUpdate();
-        }, 300);
+
+        function scheduleConfigPreview() {
+            clearTimeout(scheduledConfigPreview);
+            pendingConfigCommit = true;
+            setSaveStatus('preview', 'Vista previa en vivo · se guarda al soltar');
+            scheduledConfigPreview = setTimeout(() => {
+                scheduledConfigPreview = null;
+                if (!socket) return;
+                const revision = ++latestPreviewRevision;
+                const saveRevision = latestSaveRevision;
+                socket.emit('previewConfig', getConfigFromForm())
+                    .then(result => {
+                        if (!result.skipped && revision === latestPreviewRevision && saveRevision === latestSaveRevision) {
+                            setSaveStatus('preview', 'Vista previa activa · falta guardar');
+                        }
+                    })
+                    .catch(error => {
+                        setSaveStatus('error', 'No se pudo actualizar la vista previa');
+                        console.error('Luces: no se pudo actualizar la vista previa', error);
+                    });
+            }, 100);
+        }
 
         // DOM elements cache
         const masterSpeed = document.getElementById('master-speed');
@@ -916,6 +975,7 @@
         const previewIframe = document.getElementById('preview-iframe');
         const copyObsBtn = document.getElementById('copy-obs-btn');
         const saveBtn = document.getElementById('save-btn');
+        const blackoutBtn = document.getElementById('blackout-btn');
         const tapBtn = document.getElementById('tap-btn');
         const pulseBtn = document.getElementById('pulse-btn');
         const randomMode = document.getElementById('random-mode');
@@ -1116,10 +1176,33 @@
 
         // Envía los cambios al servidor Go y los sincroniza con los overlays.
         function sendConfigUpdate() {
-            if (socket) {
-                const config = getConfigFromForm();
-                socket.emit('updateConfig', config);
+            clearTimeout(scheduledConfigPreview);
+            scheduledConfigPreview = null;
+            pendingConfigCommit = false;
+            if (!socket) {
+                setSaveStatus('error', 'Sin conexión con el servidor');
+                return Promise.resolve(false);
             }
+            const revision = ++latestSaveRevision;
+            setSaveStatus('saving', 'Guardando configuración…');
+            return Promise.resolve(socket.emit('updateConfig', getConfigFromForm()))
+                .then(() => {
+                    if (revision === latestSaveRevision) setSaveStatus('saved', 'Configuración guardada');
+                    return true;
+                })
+                .catch((error) => {
+                    if (revision === latestSaveRevision) setSaveStatus('error', 'No se pudo guardar; revisa la conexión');
+                    console.error('Luces: no se pudo guardar la configuración', error);
+                    return false;
+                });
+        }
+
+        function updateBlackoutButton(active) {
+            blackoutBtn.setAttribute('aria-pressed', String(active));
+            blackoutBtn.textContent = active ? '↻ Reactivar luces' : '⏻ Blackout';
+            blackoutBtn.title = active
+                ? 'Restablece los efectos sin cambiar el preset guardado'
+                : 'Apaga temporalmente los efectos de todos los overlays conectados';
         }
 
         // Attach change listeners to all controls
@@ -1138,7 +1221,7 @@
             });
             input.addEventListener('input', () => {
                 updateLabelsAndWrappers();
-                debouncedUpdate();
+                scheduleConfigPreview();
             });
         });
 
@@ -1199,6 +1282,10 @@
         socket = io('', { query: { type: 'dashboard' } });
 
         socket.on('configUpdate', (config) => {
+            if (!initialConfigReceived) {
+                initialConfigReceived = true;
+                setSaveStatus('saved', 'Configuración sincronizada');
+            }
             const isEditing = document.activeElement &&
                               (document.activeElement.tagName === 'INPUT' ||
                                document.activeElement.tagName === 'SELECT');
@@ -1264,18 +1351,46 @@
             }
         });
 
+        socket.on('blackoutUpdate', (state) => {
+            updateBlackoutButton(Boolean(state.active));
+        });
+
+        socket.on('connect', () => {
+            if (latestSaveRevision === 0) setSaveStatus('saved', 'Conectado y sincronizado');
+        });
+
+        socket.on('disconnect', () => {
+            setSaveStatus('error', 'Sin conexión; reintentando…');
+        });
+
+        socket.on('connect_error', () => {
+            setSaveStatus('error', 'Conexión inestable; se reintentará');
+        });
+
         // Save Button Click
-        saveBtn.addEventListener('click', () => {
-            sendConfigUpdate();
-            const originalText = saveBtn.innerText;
-            saveBtn.innerText = '✨ ¡Configuración Guardada! ✨';
-            saveBtn.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
-            saveBtn.style.boxShadow = '0 0 15px rgba(16, 185, 129, 0.4)';
-            setTimeout(() => {
-                saveBtn.innerText = originalText;
-                saveBtn.style.background = '';
-                saveBtn.style.boxShadow = '';
-            }, 1800);
+        saveBtn.addEventListener('click', async () => {
+            saveBtn.disabled = true;
+            const saved = await sendConfigUpdate();
+            if (saved) {
+                const originalText = saveBtn.innerText;
+                saveBtn.innerText = '✓ Configuración guardada';
+                setTimeout(() => { saveBtn.innerText = originalText; }, 1400);
+            }
+            saveBtn.disabled = false;
+        });
+
+        blackoutBtn.addEventListener('click', async () => {
+            const active = blackoutBtn.getAttribute('aria-pressed') !== 'true';
+            blackoutBtn.disabled = true;
+            try {
+                const result = await socket.emit('blackout', { active });
+                updateBlackoutButton(Boolean(result.blackout));
+            } catch (error) {
+                setSaveStatus('error', 'No se pudo aplicar Blackout');
+                console.error('Luces: no se pudo cambiar Blackout', error);
+            } finally {
+                blackoutBtn.disabled = false;
+            }
         });
 
         // Copy OBS URL Action
@@ -1317,6 +1432,7 @@
         let randomTimer     = null;   // setInterval handle
         let randomCountdown = 0;      // seconds remaining
         let randomTick      = null;   // setInterval for countdown display
+        let randomPausedForVisibility = false;
 
         function pick(arr) {
             return arr[Math.floor(Math.random() * arr.length)];
@@ -1396,7 +1512,9 @@
         }
 
         function startRandomMode() {
-            clearInterval(randomTimer);
+            clearTimeout(randomTimer);
+            clearInterval(randomTick);
+            randomPausedForVisibility = false;
             randomCountdownBadge.style.display = 'inline-block';
 
             // Apply immediately on activation
@@ -1419,8 +1537,23 @@
             clearTimeout(randomTimer);
             clearInterval(randomTick);
             randomTimer = null;
+            randomTick = null;
+            randomPausedForVisibility = false;
             randomCountdownBadge.style.display = 'none';
         }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && randomMode.checked) {
+                clearTimeout(randomTimer);
+                clearInterval(randomTick);
+                randomTimer = null;
+                randomTick = null;
+                randomPausedForVisibility = true;
+            } else if (!document.hidden && randomPausedForVisibility && randomMode.checked) {
+                startRandomMode();
+            }
+            if (document.hidden && pendingConfigCommit) sendConfigUpdate();
+        });
 
         randomMode.addEventListener('change', () => {
             if (randomMode.checked) {

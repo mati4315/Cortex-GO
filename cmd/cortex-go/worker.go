@@ -165,8 +165,10 @@ func (s *workerService) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/modules/lights/state", s.lights.handleState)
 	mux.HandleFunc("GET /api/modules/lights/settings", s.lights.handleSettings)
 	mux.HandleFunc("PUT /api/modules/lights/settings", s.lights.handleSettings)
+	mux.HandleFunc("POST /api/modules/lights/preview", s.lights.handlePreview)
 	mux.HandleFunc("POST /api/modules/lights/beat", s.lights.handleBeat)
 	mux.HandleFunc("GET /api/modules/lights/events", s.lights.handleEvents)
+	mux.HandleFunc("POST /api/modules/lights/blackout", s.lights.handleBlackout)
 	mux.HandleFunc("POST /internal/shutdown", s.handleShutdown)
 }
 

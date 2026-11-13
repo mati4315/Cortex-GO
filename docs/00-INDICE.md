@@ -45,7 +45,7 @@
 | 13-GUIA-CAPTURA-COMENTARIOS-FACEBOOK.md | Captura prototipada; validación manual pendiente | El [prototipo de dos perfiles](../experiments/facebook-browser-poc/README.md) envía eventos nuevos al API local; faltan login/2FA y aceptación en la PC principal. |
 | 14-BASE-OPERATIVA.md | Base publicada y desplegada | Resume el despliegue y las comprobaciones realizadas; la autenticación de Facebook y aceptación de la PC habitual quedan pendientes. |
 | 15-MODULO-BIENVENIDOS-Y-BANNER.md | Integrado en Go | URLs, controles, persistencia SQLite v2, OBS local opcional y validación visual pendiente. |
-| 16-MODULO-LUCES.md | Integrado en Go | Efectos Canvas, seis presets, configuración SQLite y sincronización en tiempo real; aceptación visual pendiente en OBS. |
+| 16-MODULO-LUCES.md | Integrado en Go | Canvas, seis presets, guardado agrupado, Blackout temporal y diagnóstico FPS/resolución; aceptación visual pendiente en OBS. |
 
 ## Proyecto y publicación
 
@@ -89,6 +89,7 @@ Las afirmaciones se marcan como **Confirmado**, **Probable**, **Hipótesis**, **
 | 2026-11-12 | Aclarado que “unificar” significa un único punto de inicio y supervisión, no necesariamente un solo proceso. | El propietario quiere evitar abrir y vigilar cada módulo por separado; los auxiliares deben quedar gestionados por Cortex. |
 | 2026-11-12 | Confirmada la PC actual y recomendado integrar Trigger Studio al panel central para el acceso remoto futuro. | La segunda PC puede ser solo cliente de control; un agente separado depende de si allí se ejecutan OBS o recursos locales. |
 | 2026-11-13 | Integrado el módulo Luces con configuración SQLite y eventos en tiempo real. | Portar los efectos, presets y controles del proyecto anterior sin su servidor Node ni su configuración privada. |
+| 2026-11-13 | Añadidos guardado agrupado con estado visible, Blackout temporal y diagnóstico de FPS/resolución para OBS. | Reducir escrituras repetidas y facilitar el apagado inmediato y la aceptación visual del overlay. |
 | 2026-11-12 | Confirmado que la segunda PC será una notebook usada solo como control remoto. | No necesita OBS, backend ni agente local; usará el panel central de Cortex. |
 | 2026-11-12 | Go queda elegido para el núcleo/backend. | El propietario pregunta y acepta la recomendación IA 2; la elección de lenguaje no sustituye validar recuperación del proceso. |
 | 2026-11-12 | Registrada la incidencia del servidor central y el reinicio manual actual. | El primer corte Go debe incluir un supervisor que sobreviva al cierre del backend y documente la causa. |

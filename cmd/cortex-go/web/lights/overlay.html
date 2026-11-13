@@ -62,11 +62,30 @@
             background: rgba(30, 41, 59, 0.95);
             transform: translate(-50%, -50%) scale(1.03);
         }
+
+        #lights-debug {
+            display: none;
+            position: fixed;
+            left: 12px;
+            bottom: 12px;
+            z-index: 200;
+            max-width: calc(100vw - 24px);
+            padding: 7px 10px;
+            border: 1px solid rgba(0, 240, 255, 0.35);
+            border-radius: 7px;
+            background: rgba(3, 7, 18, 0.86);
+            color: #dbeafe;
+            font: 12px/1.5 'Share Tech Mono', monospace;
+            white-space: pre-line;
+            pointer-events: none;
+        }
+        body.debug-overlay #lights-debug { display: block; }
     </style>
 </head>
 <body data-lights-client="overlay">
     <div id="bg-darkness"></div>
     <canvas id="lights-canvas"></canvas>
+    <div id="lights-debug" aria-live="polite"></div>
     
     <div id="interaction-prompt" onclick="enableAudioReact()">
         🎤 Activar Modo Audio-Reactivo / Iniciar Luces
@@ -83,6 +102,9 @@
         const ctx = canvas.getContext('2d');
         const bgDarkness = document.getElementById('bg-darkness');
         const interactionPrompt = document.getElementById('interaction-prompt');
+        const debugHUD = document.getElementById('lights-debug');
+        const debugMode = new URLSearchParams(window.location.search).get('debug') === '1';
+        if (debugMode) document.body.classList.add('debug-overlay');
         const reducedMotionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)');
         let motionScale = reducedMotionQuery?.matches ? 0.5 : 1;
         const updateMotionPreference = (event) => {
@@ -134,6 +156,7 @@
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
             initSpotlights();
+            updateDebugHUD();
         }
         window.addEventListener('resize', resizeCanvas);
 
@@ -149,6 +172,11 @@
         let beatStrobeUntil = 0;
         let beatStrobePulseActive = false;
         let animationFrameId = 0;
+        let blackoutActive = false;
+        let overlayConnected = Boolean(socket.connected);
+        let debugFrames = 0;
+        let debugFPS = 0;
+        let debugWindowStart = performance.now();
 
         // Audio Reactive State
         let audioContext = null;
@@ -156,6 +184,56 @@
         let audioSource = null;
         let dataArray = null;
         let isAudioEnabled = false;
+
+        function updateBackdrop() {
+            if (blackoutActive) return;
+            const backdropAlpha = Math.max(0.0, 0.6 - (config.intensity / 100) * 0.55);
+            bgDarkness.style.backgroundColor = `rgba(0, 0, 0, ${backdropAlpha})`;
+        }
+
+        function updateDebugHUD() {
+            if (!debugMode) return;
+            const motion = motionScale < 1 ? 'reducido' : 'normal';
+            debugHUD.textContent = `Luces · ${debugFPS || '…'} FPS · Canvas ${canvas.width}×${canvas.height}\nSSE ${overlayConnected ? 'conectado' : 'reconectando'} · Blackout ${blackoutActive ? 'activo' : 'inactivo'} · Movimiento ${motion}`;
+        }
+
+        function countDebugFrame(now) {
+            if (!debugMode) return;
+            debugFrames++;
+            const elapsed = now - debugWindowStart;
+            if (elapsed >= 1000) {
+                debugFPS = Math.round(debugFrames * 1000 / elapsed);
+                debugFrames = 0;
+                debugWindowStart = now;
+                updateDebugHUD();
+            }
+        }
+
+        function setBlackout(active) {
+            blackoutActive = active;
+            if (active) {
+                if (animationFrameId !== 0) cancelAnimationFrame(animationFrameId);
+                animationFrameId = 0;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                canvas.style.visibility = 'hidden';
+                bgDarkness.style.display = 'none';
+                interactionPrompt.style.display = 'none';
+                if (audioContext && audioContext.state === 'running') audioContext.suspend().catch(() => {});
+            } else {
+                canvas.style.visibility = '';
+                bgDarkness.style.display = '';
+                updateBackdrop();
+                interactionPrompt.style.display = config.audioReactive && !isAudioEnabled ? 'block' : 'none';
+                interactionPrompt.style.opacity = '1';
+                lastBeatTime = Date.now();
+                beatPulse = 0;
+                if (isAudioEnabled && audioContext && audioContext.state === 'suspended' && !document.hidden) {
+                    audioContext.resume().catch(() => {});
+                }
+                startAnimationLoop();
+            }
+            updateDebugHUD();
+        }
 
         // Color palettes helper
         const PALETTES = {
@@ -756,6 +834,7 @@
 
         // Trigger Beat Event (Pulses wash lights, shifts lasers, etc.)
         function triggerBeat(isManual = false) {
+            if (blackoutActive) return;
             lastBeatTime = Date.now();
             beatPulse = motionScale; // Reduce beat motion when the system requests it.
 
@@ -771,7 +850,7 @@
         // Animation Master Loop
         function animate() {
             animationFrameId = 0;
-            if (document.hidden) return;
+            if (document.hidden || blackoutActive) return;
 
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             
@@ -825,11 +904,12 @@
             drawDiscoBall();                // 6. Overhead ball fixture
             drawStrobe();                   // 7. Full screen strobe flashes
 
+            countDebugFrame(performance.now());
             animationFrameId = requestAnimationFrame(animate);
         }
 
         function startAnimationLoop() {
-            if (!document.hidden && animationFrameId === 0) {
+            if (!document.hidden && !blackoutActive && animationFrameId === 0) {
                 animationFrameId = requestAnimationFrame(animate);
             }
         }
@@ -845,7 +925,7 @@
                 return;
             }
 
-            if (isAudioEnabled && audioContext && audioContext.state === 'suspended') {
+            if (isAudioEnabled && !blackoutActive && audioContext && audioContext.state === 'suspended') {
                 audioContext.resume().catch(() => {});
             }
             startAnimationLoop();
@@ -879,25 +959,32 @@
                     alert('No se pudo acceder al micrófono para la música. Usando temporizador BPM virtual.');
                     config.audioReactive = false;
                     config.virtualBeat = true;
-                    if (socket) socket.emit('updateConfig', { audioReactive: false, virtualBeat: true });
+                    if (socket) socket.emit('updateConfig', { audioReactive: false, virtualBeat: true }).catch(() => {});
                     interactionPrompt.style.display = 'none';
                 });
         }
 
         // Setup Socket event listeners
         if (socket) {
+            socket.on('connect', () => {
+                overlayConnected = true;
+                updateDebugHUD();
+            });
+            socket.on('disconnect', () => {
+                overlayConnected = false;
+                updateDebugHUD();
+            });
+            socket.on('blackoutUpdate', (state) => setBlackout(Boolean(state.active)));
+
             socket.on('configUpdate', (newConfig) => {
                 config = { ...config, ...newConfig };
                 beatInterval = 60000 / config.bpm;
 
                 // Adjust transparency backing if transparent source or browser
-                if (config.intensity) {
-                    const backdropAlpha = Math.max(0.0, 0.6 - (config.intensity / 100) * 0.55);
-                    bgDarkness.style.backgroundColor = `rgba(0, 0, 0, ${backdropAlpha})`;
-                }
+                updateBackdrop();
 
                 // Show/hide browser prompt for audio if requested and not authorized
-                if (config.audioReactive && !isAudioEnabled) {
+                if (!blackoutActive && config.audioReactive && !isAudioEnabled) {
                     interactionPrompt.style.display = 'block';
                     interactionPrompt.style.opacity = '1';
                 } else {

@@ -69,10 +69,13 @@ type lightsConnectionStatus struct {
 }
 
 type lightsService struct {
-	store   *eventStore
-	mu      sync.Mutex
-	config  lightsConfig
-	clients map[string]*lightsClient
+	store          *eventStore
+	mu             sync.Mutex
+	config         lightsConfig
+	previewConfig  *lightsConfig
+	previewOwnerID string
+	blackoutActive bool
+	clients        map[string]*lightsClient
 }
 
 func defaultLightsConfig() lightsConfig {
@@ -136,10 +139,48 @@ func (s *lightsService) snapshot() lightsConfig {
 
 func (s *lightsService) handleState(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
-	config := s.config
+	config := s.effectiveConfigLocked()
+	savedConfig := s.config
 	connections := s.connectionStatusLocked()
+	blackoutActive := s.blackoutActive
+	previewing := s.previewConfig != nil
 	s.mu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]any{"config": config, "connections": connections})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"config": config, "savedConfig": savedConfig, "connections": connections,
+		"blackout": blackoutActive, "previewing": previewing,
+	})
+}
+
+func (s *lightsService) effectiveConfigLocked() lightsConfig {
+	if s.previewConfig != nil {
+		return *s.previewConfig
+	}
+	return s.config
+}
+
+func (s *lightsService) handleBlackout(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 2<<10)
+	var request struct {
+		Active *bool `json:"active"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || request.Active == nil {
+		http.Error(w, "El estado de Blackout no es válido", http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		http.Error(w, "La solicitud de Blackout contiene datos adicionales", http.StatusBadRequest)
+		return
+	}
+
+	s.mu.Lock()
+	s.blackoutActive = *request.Active
+	active := s.blackoutActive
+	s.mu.Unlock()
+	payload := map[string]bool{"active": active}
+	s.broadcast("blackoutUpdate", payload, "")
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "blackout": active})
 }
 
 func (s *lightsService) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -152,18 +193,7 @@ func (s *lightsService) handleSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
-	decoder := json.NewDecoder(r.Body)
-	var request map[string]json.RawMessage
-	if err := decoder.Decode(&request); err != nil {
-		http.Error(w, "La configuración de Luces no es un JSON válido", http.StatusBadRequest)
-		return
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		http.Error(w, "La configuración de Luces contiene datos adicionales", http.StatusBadRequest)
-		return
-	}
-	patch, err := lightsConfigPatch(request)
+	patch, err := decodeLightsConfigPatch(w, r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -175,6 +205,67 @@ func (s *lightsService) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	s.broadcast("configUpdate", config, "")
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "config": config})
+}
+
+func (s *lightsService) handlePreview(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+	decoder := json.NewDecoder(r.Body)
+	var request map[string]json.RawMessage
+	if err := decoder.Decode(&request); err != nil {
+		http.Error(w, "La vista previa de Luces no es un JSON válido", http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		http.Error(w, "La solicitud de vista previa contiene datos adicionales", http.StatusBadRequest)
+		return
+	}
+	clientIDRaw, ok := request["clientId"]
+	var clientID string
+	if !ok || json.Unmarshal(clientIDRaw, &clientID) != nil || !lightsClientIDPattern.MatchString(clientID) {
+		http.Error(w, "La vista previa requiere una sesión de panel válida", http.StatusBadRequest)
+		return
+	}
+	delete(request, "clientId")
+	patch, err := lightsConfigPatch(request)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	client, connected := s.clients[clientID]
+	if !connected || client.typeName != "dashboard" {
+		s.mu.Unlock()
+		http.Error(w, "El panel de Luces ya no está conectado", http.StatusConflict)
+		return
+	}
+	base := s.effectiveConfigLocked()
+	next, err := mergeLightsConfig(base, patch)
+	if err == nil {
+		err = validateLightsConfig(next)
+	}
+	if err != nil {
+		s.mu.Unlock()
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.previewConfig = &next
+	s.previewOwnerID = clientID
+	s.mu.Unlock()
+	s.broadcast("configUpdate", next, "")
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "previewing": true, "config": next})
+}
+
+func decodeLightsConfigPatch(w http.ResponseWriter, r *http.Request) (map[string]json.RawMessage, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+	decoder := json.NewDecoder(r.Body)
+	var request map[string]json.RawMessage
+	if err := decoder.Decode(&request); err != nil {
+		return nil, errors.New("La configuración de Luces no es un JSON válido")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, errors.New("La configuración de Luces contiene datos adicionales")
+	}
+	return lightsConfigPatch(request)
 }
 
 func lightsConfigPatch(request map[string]json.RawMessage) (map[string]json.RawMessage, error) {
@@ -211,7 +302,26 @@ func lightsConfigPatch(request map[string]json.RawMessage) (map[string]json.RawM
 func (s *lightsService) updateConfig(ctx context.Context, patch map[string]json.RawMessage) (lightsConfig, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	encoded, err := json.Marshal(s.config)
+	next, err := mergeLightsConfig(s.config, patch)
+	if err != nil {
+		return lightsConfig{}, err
+	}
+	if err := validateLightsConfig(next); err != nil {
+		return lightsConfig{}, err
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := s.persist(writeCtx, next); err != nil {
+		return lightsConfig{}, fmt.Errorf("no se pudo guardar la configuración de Luces: %w", err)
+	}
+	s.config = next
+	s.previewConfig = nil
+	s.previewOwnerID = ""
+	return next, nil
+}
+
+func mergeLightsConfig(current lightsConfig, patch map[string]json.RawMessage) (lightsConfig, error) {
+	encoded, err := json.Marshal(current)
 	if err != nil {
 		return lightsConfig{}, err
 	}
@@ -230,15 +340,6 @@ func (s *lightsService) updateConfig(ctx context.Context, patch map[string]json.
 	if err := json.Unmarshal(encoded, &next); err != nil {
 		return lightsConfig{}, errors.New("uno o más valores tienen un tipo incorrecto")
 	}
-	if err := validateLightsConfig(next); err != nil {
-		return lightsConfig{}, err
-	}
-	writeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	if err := s.persist(writeCtx, next); err != nil {
-		return lightsConfig{}, fmt.Errorf("no se pudo guardar la configuración de Luces: %w", err)
-	}
-	s.config = next
 	return next, nil
 }
 
@@ -360,13 +461,16 @@ func (s *lightsService) handleEvents(w http.ResponseWriter, r *http.Request) {
 	client := &lightsClient{id: clientID, typeName: typeName, events: make(chan lightsEvent, 32)}
 	s.mu.Lock()
 	s.clients[clientID] = client
-	config := s.config
+	config := s.effectiveConfigLocked()
 	connections := s.connectionStatusLocked()
+	blackoutActive := s.blackoutActive
 	s.mu.Unlock()
 	defer s.removeClient(clientID, client)
 
 	w.WriteHeader(http.StatusOK)
-	if writeLightsEvent(w, flusher, "configUpdate", config) != nil || writeLightsEvent(w, flusher, "connectionStatus", connections) != nil {
+	if writeLightsEvent(w, flusher, "configUpdate", config) != nil ||
+		writeLightsEvent(w, flusher, "connectionStatus", connections) != nil ||
+		writeLightsEvent(w, flusher, "blackoutUpdate", map[string]bool{"active": blackoutActive}) != nil {
 		return
 	}
 	s.broadcast("connectionStatus", connections, clientID)
@@ -397,7 +501,18 @@ func (s *lightsService) removeClient(clientID string, client *lightsClient) {
 	}
 	delete(s.clients, clientID)
 	connections := s.connectionStatusLocked()
+	var restoredConfig *lightsConfig
+	if client.typeName == "dashboard" && s.previewConfig != nil &&
+		(s.previewOwnerID == clientID || connections.Dashboards == 0) {
+		s.previewConfig = nil
+		s.previewOwnerID = ""
+		config := s.config
+		restoredConfig = &config
+	}
 	s.mu.Unlock()
+	if restoredConfig != nil {
+		s.broadcast("configUpdate", *restoredConfig, "")
+	}
 	s.broadcast("connectionStatus", connections, "")
 }
 
