@@ -134,6 +134,9 @@
         let colorHueIndex = 0; // used for rainbow color cycles
         let strobePhaseConfig = '';
         let strobePhaseStart = 0;
+        let beatStrobeLastAt = -Infinity;
+        let beatStrobeUntil = 0;
+        let beatStrobePulseActive = false;
         let animationFrameId = 0;
 
         // Audio Reactive State
@@ -686,6 +689,8 @@
         function drawStrobe() {
             if (!config.strobe) {
                 strobePhaseConfig = '';
+                beatStrobePulseActive = false;
+                beatStrobeUntil = 0;
                 return;
             }
 
@@ -694,6 +699,7 @@
 
             if (config.strobeMode === 'freq') {
                 // Keep the selected flash frequency independent from frame timing.
+                beatStrobePulseActive = false;
                 const speed = Math.max(2, Math.min(3, Number(config.strobeSpeed) || 2));
                 const phaseConfig = `${config.strobeMode}:${speed}`;
                 if (phaseConfig !== strobePhaseConfig) {
@@ -703,8 +709,17 @@
                 const period = 1000 / speed;
                 showStrobe = ((now - strobePhaseStart) % period) < period / 2;
             } else if (config.strobeMode === 'beat') {
-                // Flashes on beats, decays quickly
-                showStrobe = beatPulse > 0.75;
+                // Rate-limit beat flashes to the same 3 Hz safety ceiling.
+                if (beatPulse <= 0.75) {
+                    beatStrobePulseActive = false;
+                } else if (!beatStrobePulseActive) {
+                    beatStrobePulseActive = true;
+                    if (now - beatStrobeLastAt >= 1000 / 3) {
+                        beatStrobeLastAt = now;
+                        beatStrobeUntil = now + 100;
+                    }
+                }
+                showStrobe = now < beatStrobeUntil;
             }
 
             if (showStrobe) {
