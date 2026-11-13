@@ -34,7 +34,7 @@ La configuración se guarda en la tabla `module_settings` de SQLite bajo el iden
 
 El overlay conserva el renderizado Canvas del diseño anterior para dibujar las luces en el navegador de OBS. El backend, la persistencia y la coordinación de estado son Go; no se inicia un servidor Node, no se necesita Socket.IO y no se cargan fuentes desde CDN.
 
-El renderizado Canvas y el análisis del AudioContext se pausan cuando el navegador oculta la página, reduciendo trabajo en pestañas no visibles. La frecuencia configurada para el estrobo se calcula por tiempo y no depende del ritmo de cuadros del navegador.
+El renderizado Canvas y el análisis del AudioContext se pausan cuando el navegador oculta la página, reduciendo trabajo en pestañas no visibles. El módulo también ralentiza el movimiento y pausa el estrobo cuando el sistema solicita reducir movimiento. La frecuencia configurada para el estrobo se calcula por tiempo y no depende del ritmo de cuadros del navegador.
 
 El rango del estrobo queda limitado a un máximo de 3 destellos por segundo por seguridad visual, tanto en modo de frecuencia como en modo por beat. Si la base ya tenía un valor superior, Cortex lo baja a 3 Hz al cargar la configuración.
 

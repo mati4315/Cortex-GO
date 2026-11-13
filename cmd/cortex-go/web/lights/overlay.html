@@ -83,6 +83,17 @@
         const ctx = canvas.getContext('2d');
         const bgDarkness = document.getElementById('bg-darkness');
         const interactionPrompt = document.getElementById('interaction-prompt');
+        const reducedMotionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+        let motionScale = reducedMotionQuery?.matches ? 0.5 : 1;
+        const updateMotionPreference = (event) => {
+            motionScale = event.matches ? 0.5 : 1;
+            if (motionScale < 1) beatPulse = Math.min(beatPulse, motionScale);
+        };
+        if (reducedMotionQuery?.addEventListener) {
+            reducedMotionQuery.addEventListener('change', updateMotionPreference);
+        } else {
+            reducedMotionQuery?.addListener(updateMotionPreference);
+        }
 
         // Global Party Lights Configuration (syncs with dashboard)
         let config = {
@@ -260,8 +271,8 @@
             ctx.globalCompositeOperation = 'lighter';
 
             smokeParticles.forEach(p => {
-                p.x += p.vx * (1 + config.speed / 100);
-                p.y += p.vy * (1 + config.speed / 100);
+                p.x += p.vx * (1 + config.speed / 100) * motionScale;
+                p.y += p.vy * (1 + config.speed / 100) * motionScale;
                 p.pulse += 0.005;
 
                 // Wrap around edges
@@ -294,7 +305,7 @@
         function updateAndDrawDiscoBallDots() {
             if (!config.discoBall || !config.discoBallDots) return;
 
-            const speedFactor = (config.discoBallSpeed / 100) * 0.02;
+            const speedFactor = (config.discoBallSpeed / 100) * 0.02 * motionScale;
             const dotCount = 80;
 
             // Initialize if empty
@@ -376,7 +387,7 @@
             if (!config.spotlights) return;
             if (spotlights.length !== config.spotlightCount) initSpotlights();
 
-            const speedFactor = (config.spotlightSpeed / 100) * 0.03;
+            const speedFactor = (config.spotlightSpeed / 100) * 0.03 * motionScale;
             const intensityVal = config.intensity / 100;
 
             ctx.save();
@@ -484,7 +495,7 @@
             if (!config.lasers) return;
 
             const laserCount = config.laserCount;
-            const speedFactor = (config.laserSpeed / 100) * 0.05;
+            const speedFactor = (config.laserSpeed / 100) * 0.05 * motionScale;
             const intensityVal = config.intensity / 100;
 
             ctx.save();
@@ -567,7 +578,7 @@
         function updateAndDrawWash() {
             if (!config.wash) return;
 
-            const speedFactor = (config.washSpeed / 100) * 0.02;
+            const speedFactor = (config.washSpeed / 100) * 0.02 * motionScale;
             const intensityVal = config.intensity / 100;
             
             ctx.save();
@@ -687,6 +698,12 @@
 
         // Strobe Flashing Overlay
         function drawStrobe() {
+            if (motionScale < 1) {
+                strobePhaseConfig = '';
+                beatStrobePulseActive = false;
+                beatStrobeUntil = 0;
+                return;
+            }
             if (!config.strobe) {
                 strobePhaseConfig = '';
                 beatStrobePulseActive = false;
@@ -740,7 +757,7 @@
         // Trigger Beat Event (Pulses wash lights, shifts lasers, etc.)
         function triggerBeat(isManual = false) {
             lastBeatTime = Date.now();
-            beatPulse = 1.0; // reset beat decay pulse
+            beatPulse = motionScale; // Reduce beat motion when the system requests it.
 
             // Rotate color index for color-changing palettes
             colorHueIndex = (colorHueIndex + 25) % 360;
@@ -760,7 +777,7 @@
             
             // Advance running speed metrics
             const speedMult = 1 + (config.speed / 100) * 1.5;
-            time += 0.05 * speedMult;
+            time += 0.05 * speedMult * motionScale;
 
             // Decay beat pulse intensity over time (linear interpolation)
             if (beatPulse > 0) {

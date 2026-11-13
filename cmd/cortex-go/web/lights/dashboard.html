@@ -143,6 +143,15 @@
             }
         }
 
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                scroll-behavior: auto !important;
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+
         .form-group {
             margin-bottom: 1.2rem;
         }
@@ -725,7 +734,7 @@
                             <span class="slider-switch"></span>
                         </label>
                     </div>
-                    <p class="strobe-warning" role="note"><strong>Precaución:</strong> los destellos rápidos pueden afectar a personas fotosensibles. El estrobo empieza apagado; úsalo con cuidado y mantén una frecuencia baja cuando sea posible.</p>
+                    <p class="strobe-warning" role="note"><strong>Precaución:</strong> los destellos rápidos pueden afectar a personas fotosensibles. El estrobo empieza apagado y se pausa cuando el navegador prefiere movimiento reducido.</p>
                     <div class="grid-2">
                         <div class="form-group">
                             <label>Modo de Estrobo</label>
