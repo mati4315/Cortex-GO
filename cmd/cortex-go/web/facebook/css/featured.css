@@ -1,0 +1,75 @@
+:root {
+  color-scheme: dark;
+  --forest: #64763c;
+  --featured-height: 360px;
+  --forest-dark: #354734;
+  --paper: #eef3df;
+  --paper-shadow: #d5e3bd;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+  font-family: "Segoe UI", Roboto, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.stage { position: absolute; inset: 0; display: grid; place-items: center; padding: 28px; }
+
+.feature {
+  position: relative;
+  width: min(760px, 100%);
+  min-height: 182px;
+  padding-left: 154px;
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 350ms ease, transform 350ms ease;
+}
+
+.feature::before {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: 0;
+  width: 188px;
+  height: 188px;
+  transform: translateY(-50%);
+  background: url('/modules/facebook/assets/kangaroo.svg') center / contain no-repeat;
+  pointer-events: none;
+  animation: mascot-bob 12s ease-in-out infinite;
+}
+
+.feature-card {
+  position: relative;
+  min-height: 182px;
+  padding: 24px 26px 24px 40px;
+  color: var(--forest-dark);
+  background: linear-gradient(135deg, rgba(240, 242, 222, 0.98), rgba(224, 232, 201, 0.98));
+  border: 1px solid rgba(87, 111, 61, 0.85);
+  border-bottom: 4px solid var(--forest);
+  border-radius: 8px 26px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22), inset 0 0 0 5px rgba(255, 255, 255, 0.12);
+}
+
+.feature[hidden] { display: none; }
+.feature.visible { opacity: 1; transform: translateY(0); }
+.kicker { display: flex; align-items: center; gap: 8px; color: var(--forest); font-size: 12px; font-weight: 850; letter-spacing: 0.13em; text-transform: uppercase; }
+.leaf { display: grid; place-items: center; width: 25px; height: 25px; color: var(--paper); background: var(--forest); border-radius: 50%; font-size: 14px; }
+.heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.heading strong { color: var(--forest-dark); font-family: Georgia, "Times New Roman", serif; font-size: clamp(22px, 4vw, 32px); overflow-wrap: anywhere; }
+.account { padding: 4px 8px; color: #536638; border: 1px solid rgba(87, 111, 61, 0.45); border-radius: 999px; font-size: 11px; font-weight: 800; }
+.message { max-height: min(var(--featured-height), 65vh); margin: 12px 0 0; overflow: hidden; overscroll-behavior: contain; scrollbar-width: none; color: var(--forest-dark); font-size: clamp(18px, 3.2vw, 25px); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.time { display: block; margin-top: 12px; color: var(--forest); font-size: 12px; text-align: right; }
+.status { position: fixed; top: 12px; left: 12px; padding: 6px 9px; color: #eaf0fb; background: rgba(15, 22, 36, 0.86); border: 1px solid rgba(134, 158, 197, 0.42); border-radius: 8px; font-size: 12px; }
+body.preview .stage { background: rgba(27, 37, 54, 0.12); }
+@keyframes mascot-bob { 0%,78%,100%{transform:translateY(-50%)} 84%{transform:translateY(calc(-50% - 3px)) rotate(-2deg)} 90%{transform:translateY(-50%) rotate(2deg)} 95%{transform:translateY(calc(-50% - 1px))} }
+@keyframes mascot-bob-mobile { 0%,78%,100%{transform:translateY(0)} 84%{transform:translateY(-3px) rotate(-2deg)} 90%{transform:rotate(2deg)} 95%{transform:translateY(-1px)} }
+@media (max-width: 600px) { .stage { padding: 16px; }.feature { min-height: 0; padding: 85px 0 0; }.feature::before { top: 0; left: 16px; width: 116px; height: 116px; transform: none; animation-name: mascot-bob-mobile; }.feature-card { min-height: 0; padding: 32px 18px 18px; }.message { font-size: 19px; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }.feature::before { animation: none !important; } }

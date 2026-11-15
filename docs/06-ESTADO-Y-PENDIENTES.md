@@ -1,9 +1,13 @@
 # Estado de auditoría, riesgos y decisiones pendientes
 
 **Fecha:** 13 de noviembre de 2026 (Australia/Brisbane)
-**Estado general vigente:** la base Go se publicó y se desplegó en el equipo disponible, con API de eventos, SQLite versionada, panel PWA y lanzador de recuperación. Se preservó la base existente mediante un respaldo y se migró su historial sintético. La PC habitual está apagada; la validación real de Facebook sigue pendiente y no se ejecutó ninguna sesión en su ausencia. La segunda pasada de IA 2 fue en el mismo hilo y no equivale a revisión independiente.
+**Estado general registrado al 13 de noviembre:** la base Go se publicó y se desplegó en el equipo disponible, con API de eventos, SQLite versionada, panel PWA y lanzador de recuperación. Bienvenidos y Banner, Luces y Clima y Tiempo ya estaban integrados en Go. Esta es la fotografía de auditoría inicial, no el estado local actualizado de Rulo/Spotify; consulta [00 — Índice](00-INDICE.md) y [20 — Guía del ecosistema Rulo](20-GUIA-ECOSISTEMA-RULO.md) para los cambios posteriores. La aceptación visual final en OBS y la validación real de Facebook requieren la PC habitual; la segunda pasada de IA 2 fue en el mismo hilo y no equivale a revisión independiente.
 
 **Decisiones vigentes:** proyecto nuevo en Go, sin portar código; SocialStream Ninja excluido; los otros módulos siguen en alcance. Mientras la PC habitual permanezca apagada, el equipo disponible aloja la instancia activa por Tailscale. Mantener una sola instancia escribiendo la base; planificar cualquier traslado con respaldo verificado. El usuario eligió conservar nombres/textos de Facebook hasta borrado manual. No se importan datos del sistema anterior.
+
+## Módulos completados en esta etapa
+
+Clima y Tiempo quedó reconstruido en Go con reloj por zonas horarias, temperatura y condición actual, vistas rotativas por ciudad, apariencia configurable, pausa/selección manual y vista previa. El planificador de rotación vive en el servidor para sincronizar las distintas fuentes OBS. Las condiciones usan caché de diez minutos y permanecen disponibles si falla la consulta externa. El ejecutable compila; la inspección final en la escena OBS sigue pendiente. Detalle: [17 — Módulo Clima y Tiempo](17-MODULO-CLIMA-Y-TIEMPO.md).
 
 ## Cierre de la base operativa
 
@@ -11,7 +15,7 @@
 2. Cuando la PC habitual esté disponible, decidir si se traslada allí la instancia. Crear y verificar una copia; detener el host actual antes de iniciar el nuevo para evitar escrituras paralelas.
 3. En un equipo con acceso a Facebook, iniciar sesión manualmente y validar identidad, 2FA, aislamiento, persistencia y comentarios nuevos, sin solapar el Cortex anterior.
 4. Probar backup/restore con datos ficticios y recordar que los respaldos son copias separadas, sin cifrar.
-5. Después de aceptar la base, definir los cortes de OBS, Spotify, Rulo y demás módulos; las acciones de OBS siguen siendo de solo lectura y los otros módulos aún no están integrados.
+5. Después de aceptar la base, seguir las etapas de la [guía transversal del ecosistema Rulo](20-GUIA-ECOSISTEMA-RULO.md): contrato tipado y despachador recuperable de eventos, base/laboratorio Rulo, Spotify, Lotería/Cdelu y resto de habilidades más integración final. El historial existente es la fuente común; si la captura real de Go aún necesita aceptación, se resuelve como condición compartida una sola vez, no se repite para Rulo o cada módulo. El evento Go todavía necesita el ID estable del participante antes de conectar reservas en Cdelu; Rulo conversacional y su laboratorio pueden empezar antes con eventos simulados. Rulo, Spotify, Ruleta y Trigger Studio todavía no están integrados; las reglas de Rulo están documentadas, no aplicadas al software.
 
 Conservar el programa viejo como respaldo hasta completar varias pruebas operativas del nuevo. Durante las pruebas reales, evitar que ambas versiones controlen a la vez las mismas cuentas, escenas o acciones para no duplicar eventos. Para secretos de producción, usar el almacén de credenciales de Windows o DPAPI, no archivos de configuración ni logs.
 

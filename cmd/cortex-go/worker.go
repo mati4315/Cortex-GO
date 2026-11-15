@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -54,19 +56,31 @@ type workerStatus struct {
 		State     string `json:"state"`
 		StartedAt string `json:"startedAt"`
 	} `json:"backend"`
-	Storage storageStatus `json:"storage"`
-	OBS     obsStatus     `json:"obs"`
-	Feeds   []feedStatus  `json:"feeds"`
+	Storage storageStatus                    `json:"storage"`
+	OBS     obsStatus                        `json:"obs"`
+	Feeds   []feedStatus                     `json:"feeds"`
+	Modules map[string]moduleReadinessStatus `json:"modules"`
+}
+
+type moduleReadinessStatus struct {
+	State          string `json:"state"`
+	Detail         string `json:"detail"`
+	LastActivityAt string `json:"lastActivityAt,omitempty"`
 }
 
 type workerService struct {
-	store     *eventStore
-	welcome   *welcomeService
-	lights    *lightsService
-	startedAt string
-	probe     func(context.Context) obsStatus
+	store           *eventStore
+	welcome         *welcomeService
+	lights          *lightsService
+	weather         *weatherService
+	spotify         *spotifyService
+	facebookOverlay *facebookOverlayService
+	rulo            *ruloService
+	startedAt       string
+	probe           func(context.Context) obsStatus
 
 	storageMu sync.Mutex
+	restoreMu sync.RWMutex
 	mu        sync.RWMutex
 	feeds     map[string]feedStatus
 	obs       obsStatus
@@ -77,7 +91,7 @@ type workerService struct {
 
 func newWorkerService(store *eventStore, probe func(context.Context) obsStatus) *workerService {
 	now := time.Now().UTC().Format(time.RFC3339)
-	return &workerService{
+	service := &workerService{
 		store:     store,
 		startedAt: now,
 		probe:     probe,
@@ -88,6 +102,15 @@ func newWorkerService(store *eventStore, probe func(context.Context) obsStatus) 
 		obs:  obsStatus{State: "checking", Label: "Comprobando OBS", ReadOnly: true},
 		stop: make(chan struct{}),
 	}
+	service.facebookOverlay = newFacebookOverlayService(store, &service.storageMu, service.stop)
+	service.rulo = newRuloService(store)
+	service.rulo.restoreMu = &service.restoreMu
+	service.rulo.setPresenters(
+		service.facebookOverlay.broadcastRuloResponse,
+		service.facebookOverlay.broadcastRuloMute,
+		service.facebookOverlay.broadcastRuloOverlayConfig,
+	)
+	return service
 }
 
 func runWorker(address, dbPath, parentURL string) error {
@@ -105,6 +128,27 @@ func runWorker(address, dbPath, parentURL string) error {
 	if err != nil {
 		return fmt.Errorf("no se pudo preparar el módulo Luces: %w", err)
 	}
+	service.weather, err = newWeatherService(store)
+	if err != nil {
+		return fmt.Errorf("no se pudo preparar el módulo Clima y Tiempo: %w", err)
+	}
+	service.spotify, err = newSpotifyService(store, parentURL)
+	if err != nil {
+		return fmt.Errorf("no se pudo preparar la conexión Spotify: %w", err)
+	}
+	service.spotify.restoreMu = &service.restoreMu
+	service.rulo.spotify = service.spotify
+	service.spotify.setRuloIntegration(func() bool {
+		service.rulo.mu.RLock()
+		defer service.rulo.mu.RUnlock()
+		return !service.rulo.paused
+	}, service.rulo.appendOperationResult)
+	registerCtx, registerCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	if err := store.RegisterDispatchConsumer(registerCtx, ruloConsumerID); err != nil {
+		registerCancel()
+		return fmt.Errorf("no se pudo registrar el consumidor recuperable de Rulo: %w", err)
+	}
+	registerCancel()
 	mux := http.NewServeMux()
 	service.registerRoutes(mux)
 	server := &http.Server{
@@ -118,7 +162,10 @@ func runWorker(address, dbPath, parentURL string) error {
 		return fmt.Errorf("no se pudo escuchar en la dirección interna: %w", err)
 	}
 	go service.watchOBS()
+	go service.rulo.run(service.stop)
+	go service.spotify.run(service.stop)
 	go service.welcome.run(service.stop)
+	go service.weather.run(service.stop)
 	if parentURL != "" {
 		go service.watchParent(parentURL)
 	}
@@ -142,11 +189,25 @@ func runWorker(address, dbPath, parentURL string) error {
 func (s *workerService) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
+	mux.HandleFunc("GET /api/events/statistics", s.handleEventStatistics)
+	mux.HandleFunc("GET /api/modules/facebook/events", s.facebookOverlay.handleEvents)
+	s.rulo.registerRoutes(mux, &s.restoreMu)
+	s.spotify.registerRoutes(mux, &s.restoreMu)
+	mux.HandleFunc("GET /api/modules/facebook/featured/events", s.facebookOverlay.handleFeaturedEvents)
+	mux.HandleFunc("POST /api/modules/facebook/featured", s.handleFeatureComment)
+	mux.HandleFunc("GET /api/events/export.csv", s.handleEventsExport)
+	mux.HandleFunc("GET /api/event-archives", s.handleEventArchives)
+	mux.HandleFunc("POST /api/event-archives", s.handleSaveEventArchive)
+	mux.HandleFunc("GET /api/event-archives/{id}", s.handleGetEventArchive)
+	mux.HandleFunc("DELETE /api/event-archives/{id}", s.handleDeleteEventArchive)
 	mux.HandleFunc("POST /api/events", s.handleCaptureEvent)
 	mux.HandleFunc("DELETE /api/events", s.handleDeleteAllEvents)
 	mux.HandleFunc("DELETE /api/events/{id}", s.handleDeleteEvent)
 	mux.HandleFunc("POST /api/feeds/{id}/status", s.handleCaptureStatus)
 	mux.HandleFunc("POST /api/simulate/comment", s.handleSimulatedComment)
+	mux.HandleFunc("GET /api/program/session", s.handleProgramSession)
+	mux.HandleFunc("POST /api/program/session", s.handleProgramSession)
+	mux.HandleFunc("DELETE /api/program/session", s.handleProgramSession)
 	mux.HandleFunc("POST /api/backup", s.handleBackup)
 	mux.HandleFunc("GET /api/backups", s.handleBackups)
 	mux.HandleFunc("DELETE /api/backups", s.handleDeleteAllBackups)
@@ -169,7 +230,90 @@ func (s *workerService) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/modules/lights/beat", s.lights.handleBeat)
 	mux.HandleFunc("GET /api/modules/lights/events", s.lights.handleEvents)
 	mux.HandleFunc("POST /api/modules/lights/blackout", s.lights.handleBlackout)
+	mux.HandleFunc("GET /api/modules/weather/state", s.weather.handleState)
+	mux.HandleFunc("GET /api/modules/weather/settings", s.weather.handleSettings)
+	mux.HandleFunc("PUT /api/modules/weather/settings", s.weather.handleSettings)
+	mux.HandleFunc("POST /api/modules/weather/refresh", s.weather.handleRefresh)
+	mux.HandleFunc("POST /api/modules/weather/control", s.weather.handleControl)
+	mux.HandleFunc("GET /api/modules/weather/events", s.weather.handleEvents)
 	mux.HandleFunc("POST /internal/shutdown", s.handleShutdown)
+}
+
+func registerRestoreGuarded(mux *http.ServeMux, restoreMu *sync.RWMutex, pattern string, handler http.HandlerFunc) {
+	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		if restoreMu != nil {
+			restoreMu.RLock()
+			defer restoreMu.RUnlock()
+		}
+		handler(w, r)
+	})
+}
+
+func (s *workerService) handleProgramSession(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	s.restoreMu.RLock()
+	defer s.restoreMu.RUnlock()
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	switch r.Method {
+	case http.MethodGet:
+		session, err := s.store.ActiveProgramSession(ctx)
+		if err != nil {
+			http.Error(w, "No se pudo consultar el programa activo", http.StatusServiceUnavailable)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"active": session != nil, "session": session})
+	case http.MethodPost:
+		r.Body = http.MaxBytesReader(w, r.Body, 1024)
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		var input struct {
+			Label string `json:"label"`
+		}
+		if err := decoder.Decode(&input); err != nil {
+			http.Error(w, "El nombre del programa no es válido", http.StatusBadRequest)
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			http.Error(w, "La solicitud del programa contiene datos adicionales", http.StatusBadRequest)
+			return
+		}
+		input.Label = strings.TrimSpace(input.Label)
+		if len([]rune(input.Label)) > 120 {
+			http.Error(w, "El nombre del programa no puede superar 120 caracteres", http.StatusBadRequest)
+			return
+		}
+		if input.Label == "" {
+			input.Label = "Programa " + time.Now().Format("2006-01-02 15:04")
+		}
+		session, err := s.store.StartProgramSession(ctx, input.Label)
+		if err != nil {
+			if errors.Is(err, errProgramSessionActive) {
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
+			http.Error(w, "No se pudo iniciar el programa", http.StatusServiceUnavailable)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"active": true, "session": session})
+	case http.MethodDelete:
+		s.spotify.actionMu.Lock()
+		defer s.spotify.actionMu.Unlock()
+		session, err := s.store.EndProgramSession(ctx)
+		if err != nil {
+			if errors.Is(err, errNoProgramSession) {
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
+			http.Error(w, "No se pudo cerrar el programa", http.StatusServiceUnavailable)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"active": false, "session": session})
+	default:
+		w.Header().Set("Allow", "GET, POST, DELETE")
+		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *workerService) handleWelcomeState(w http.ResponseWriter, _ *http.Request) {
@@ -241,27 +385,473 @@ func (s *workerService) handleStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	modules := s.moduleReadiness()
 	response := workerStatus{
 		Storage: storageStatus{State: "connected", SchemaVersion: schemaVersion, EventCount: total, LastSaved: lastSaved},
 		OBS:     obs,
 		Feeds:   feeds,
+		Modules: modules,
 	}
 	response.Backend.State = "running"
 	response.Backend.StartedAt = s.startedAt
 	writeJSON(w, http.StatusOK, response)
 }
 
+func (s *workerService) moduleReadiness() map[string]moduleReadinessStatus {
+	modules := make(map[string]moduleReadinessStatus, 5)
+
+	_, timer, transition := s.welcome.snapshot()
+	welcome := moduleReadinessStatus{State: "ready", Detail: "Módulo disponible"}
+	if timer.Running {
+		welcome.Detail = fmt.Sprintf("Cuenta regresiva activa · quedan %s", formatCountdown(timer.RemainingSeconds))
+	} else if timer.Completed {
+		welcome.Detail = "Cuenta regresiva finalizada"
+	} else {
+		welcome.Detail = "Cuenta regresiva en espera"
+	}
+	if transition != nil {
+		welcome.LastActivityAt = transition.At
+		if !transition.Success {
+			welcome.State = "attention"
+			welcome.Detail = "Falló el último cambio de escena: " + transition.Error
+		}
+	}
+	modules["welcome"] = welcome
+
+	lightConnections, blackout, previewing, lightsLastActivity := s.lights.statusSnapshot()
+	lights := moduleReadinessStatus{State: "ready", Detail: overlayConnectionDetail(lightConnections.Overlays)}
+	lights.LastActivityAt = lightsLastActivity
+	if lightConnections.Overlays == 0 {
+		lights.State = "attention"
+		lights.Detail = "Esperando una fuente de navegador de OBS"
+	}
+	if blackout {
+		lights.Detail += " · apagado temporal activo"
+	} else if previewing {
+		lights.Detail += " · vista previa activa"
+	}
+	modules["lights"] = lights
+
+	_, runtime, weatherConnections, refreshing := s.weather.snapshot()
+	weather := moduleReadinessStatus{State: "ready", Detail: overlayConnectionDetail(weatherConnections.Overlays)}
+	if weatherConnections.Overlays == 0 {
+		weather.State = "attention"
+		weather.Detail = "Esperando una fuente de navegador de OBS"
+	}
+	if refreshing {
+		weather.Detail += " · actualizando clima"
+	}
+	if runtime.LastRefresh != "" {
+		weather.LastActivityAt = runtime.LastRefresh
+	}
+	if runtime.LastError != "" {
+		weather.State = "attention"
+		weather.Detail = runtime.LastError
+	} else if runtime.LastRefresh == "" {
+		weather.Detail = "Esperando la primera actualización"
+	}
+	modules["weather"] = weather
+	stateCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	cursor, err := s.store.DispatchCursor(stateCtx, ruloConsumerID)
+	ruloStatus := moduleReadinessStatus{State: "ready", Detail: "Base conectada; acciones en vivo deshabilitadas"}
+	if err != nil {
+		ruloStatus.State = "attention"
+		ruloStatus.Detail = "No se pudo consultar el despacho recuperable"
+	} else {
+		ruloStatus.Detail = fmt.Sprintf("Base conectada; acciones en vivo deshabilitadas · cursor %d", cursor)
+	}
+	s.rulo.mu.RLock()
+	if s.rulo.lastError != "" {
+		ruloStatus.State = "attention"
+		ruloStatus.Detail = s.rulo.lastError
+	}
+	s.rulo.mu.RUnlock()
+	modules["rulo"] = ruloStatus
+	modules[spotifyModuleID] = s.spotify.readiness()
+
+	return modules
+}
+
+func overlayConnectionDetail(count int) string {
+	switch count {
+	case 0:
+		return "Ninguna fuente de navegador conectada"
+	case 1:
+		return "1 fuente de navegador conectada"
+	default:
+		return fmt.Sprintf("%d fuentes de navegador conectadas", count)
+	}
+}
+
+func formatCountdown(seconds int) string {
+	if seconds < 0 {
+		seconds = 0
+	}
+	return fmt.Sprintf("%02d:%02d", seconds/60, seconds%60)
+}
+
 func (s *workerService) handleEvents(w http.ResponseWriter, r *http.Request) {
+	feedID, query, streamID, fromAt, toBefore, afterID, limit, offset, err := parseEventListQuery(r, 100)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
-	events, err := s.store.Recent(ctx, 100)
+	if r.URL.Query().Get("limit") == "" && r.URL.Query().Get("offset") == "" && feedID == "" && query == "" && streamID == "" && fromAt == "" && toBefore == "" && afterID == 0 {
+		events, err := s.store.Recent(ctx, 100)
+		if err != nil {
+			http.Error(w, "No se pudo leer el historial de comentarios", http.StatusServiceUnavailable)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"events": events})
+		return
+	}
+	events, total, err := s.store.Page(ctx, feedID, query, streamID, fromAt, toBefore, limit, offset)
 	if err != nil {
 		http.Error(w, "No se pudo leer el historial de comentarios", http.StatusServiceUnavailable)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+	latestID, err := s.store.MaxEventID(ctx)
+	if err != nil {
+		http.Error(w, "No se pudo consultar el historial de comentarios", http.StatusServiceUnavailable)
+		return
+	}
+	response := map[string]any{"events": events, "total": total, "limit": limit, "offset": offset, "latestId": latestID}
+	if afterID > 0 {
+		newCount, err := s.store.CountAfter(ctx, feedID, query, streamID, fromAt, toBefore, afterID)
+		if err != nil {
+			http.Error(w, "No se pudo consultar los comentarios nuevos", http.StatusServiceUnavailable)
+			return
+		}
+		response["newCount"] = newCount
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *workerService) handleEventStatistics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	days := 30
+	if raw := strings.TrimSpace(r.URL.Query().Get("days")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 366 {
+			http.Error(w, "El período debe estar entre 1 y 366 días", http.StatusBadRequest)
+			return
+		}
+		days = parsed
+	}
+	feedID := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("feedId")))
+	if feedID != "" && feedID != "a" && feedID != "b" {
+		http.Error(w, "La cuenta debe ser a o b", http.StatusBadRequest)
+		return
+	}
+	now := time.Now().UTC()
+	from := now.AddDate(0, 0, -days).Format(time.RFC3339Nano)
+	to := now.Format(time.RFC3339Nano)
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	stats, err := s.store.Statistics(ctx, from, to, feedID)
+	if err != nil {
+		http.Error(w, "No se pudieron consultar las estadísticas agregadas del historial", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func parseEventListQuery(r *http.Request, defaultLimit int) (string, string, string, string, string, int64, int, int, error) {
+	values := r.URL.Query()
+	feedID := strings.ToLower(strings.TrimSpace(values.Get("feedId")))
+	query := strings.TrimSpace(values.Get("q"))
+	streamID := strings.TrimSpace(values.Get("streamId"))
+	if feedID != "" && feedID != "a" && feedID != "b" {
+		return "", "", "", "", "", 0, 0, 0, errors.New("La cuenta debe ser a o b")
+	}
+	if len([]rune(query)) > 120 {
+		return "", "", "", "", "", 0, 0, 0, errors.New("La búsqueda no puede superar 120 caracteres")
+	}
+	if len(streamID) > 128 {
+		return "", "", "", "", "", 0, 0, 0, errors.New("El ID de transmisión no puede superar 128 caracteres")
+	}
+	fromAt, toBefore, err := normalizeEventBounds(values.Get("from"), values.Get("to"))
+	if err != nil {
+		return "", "", "", "", "", 0, 0, 0, err
+	}
+	limit := defaultLimit
+	if raw := values.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			return "", "", "", "", "", 0, 0, 0, errors.New("El tamaño de página debe estar entre 1 y 100")
+		}
+		limit = parsed
+	}
+	offset := 0
+	if raw := values.Get("offset"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 || parsed > 100_000_000 {
+			return "", "", "", "", "", 0, 0, 0, errors.New("La página solicitada no es válida")
+		}
+		offset = parsed
+	}
+	var afterID int64
+	if raw := values.Get("afterId"); raw != "" {
+		afterID, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || afterID < 0 {
+			return "", "", "", "", "", 0, 0, 0, errors.New("El ID de referencia no es válido")
+		}
+	}
+	return feedID, query, streamID, fromAt, toBefore, afterID, limit, offset, nil
+}
+
+func normalizeEventBounds(fromRaw, toRaw string) (string, string, error) {
+	parse := func(raw string) (string, time.Time, error) {
+		if strings.TrimSpace(raw) == "" {
+			return "", time.Time{}, nil
+		}
+		value, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(raw))
+		if err != nil {
+			return "", time.Time{}, errors.New("Las fechas deben incluir una hora RFC3339 válida")
+		}
+		value = value.UTC()
+		return value.Format(time.RFC3339Nano), value, nil
+	}
+	fromAt, fromTime, err := parse(fromRaw)
+	if err != nil {
+		return "", "", err
+	}
+	toBefore, toTime, err := parse(toRaw)
+	if err != nil {
+		return "", "", err
+	}
+	if fromAt != "" && toBefore != "" && !fromTime.Before(toTime) {
+		return "", "", errors.New("La fecha inicial debe ser anterior a la fecha final")
+	}
+	return fromAt, toBefore, nil
+}
+
+func (s *workerService) handleEventsExport(w http.ResponseWriter, r *http.Request) {
+	feedID, query, streamID, fromAt, toBefore, _, _, _, err := parseEventListQuery(r, 100)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	s.storageMu.Lock()
+	maxID, err := s.store.MaxEventID(ctx)
+	s.storageMu.Unlock()
+	if err != nil {
+		http.Error(w, "No se pudo preparar la exportación del historial", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="cortex-facebook-historial.csv"`)
+	w.Header().Set("Cache-Control", "no-store")
+	if _, err := io.WriteString(w, "\ufeff"); err != nil {
+		return
+	}
+	csvWriter := csv.NewWriter(w)
+	if err := csvWriter.Write([]string{"id", "cuenta", "origen", "transmision", "autor", "comentario", "hora_comentario", "guardado_en"}); err != nil {
+		return
+	}
+	var beforeID int64
+	for {
+		s.storageMu.Lock()
+		events, pageErr := s.store.ExportPage(ctx, feedID, query, streamID, fromAt, toBefore, maxID, beforeID, 1000)
+		s.storageMu.Unlock()
+		if pageErr != nil || len(events) == 0 {
+			if pageErr != nil {
+				return
+			}
+			break
+		}
+		for _, event := range events {
+			if err := csvWriter.Write([]string{
+				strconv.FormatInt(event.ID, 10), event.FeedID, safeCSVValue(event.SourceID), safeCSVValue(event.StreamID),
+				safeCSVValue(event.Author), safeCSVValue(event.Message), event.EventAt, event.CreatedAt,
+			}); err != nil {
+				return
+			}
+		}
+		beforeID = events[len(events)-1].ID
+		csvWriter.Flush()
+		if csvWriter.Error() != nil || len(events) < 1000 {
+			return
+		}
+	}
+	csvWriter.Flush()
+	if err := csvWriter.Error(); err != nil {
+		return
+	}
+}
+
+func safeCSVValue(value string) string {
+	trimmed := strings.TrimLeft(value, " \t\r\n")
+	if trimmed != "" && strings.ContainsRune("=+-@", rune(trimmed[0])) {
+		return "'" + value
+	}
+	return value
+}
+
+func (s *workerService) handleEventArchives(w http.ResponseWriter, r *http.Request) {
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	archives, err := s.store.Archives(ctx)
+	if err != nil {
+		http.Error(w, "No se pudieron leer los chats guardados", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": archives})
+}
+
+func (s *workerService) handleSaveEventArchive(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var input struct {
+		Program  string `json:"program"`
+		FeedID   string `json:"feedId"`
+		Query    string `json:"q"`
+		StreamID string `json:"streamId"`
+		From     string `json:"from"`
+		To       string `json:"to"`
+	}
+	if err := decoder.Decode(&input); err != nil {
+		http.Error(w, "Los datos del chat guardado no son válidos", http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		http.Error(w, "La solicitud contiene datos adicionales", http.StatusBadRequest)
+		return
+	}
+	input.Program = strings.TrimSpace(input.Program)
+	input.FeedID = strings.ToLower(strings.TrimSpace(input.FeedID))
+	input.Query = strings.TrimSpace(input.Query)
+	input.StreamID = strings.TrimSpace(input.StreamID)
+	if len(input.Program) < 1 || len(input.Program) > 20 || !isNumericProgram(input.Program) {
+		http.Error(w, "El número de programa debe tener entre 1 y 20 dígitos", http.StatusBadRequest)
+		return
+	}
+	if input.FeedID != "" && input.FeedID != "a" && input.FeedID != "b" {
+		http.Error(w, "La cuenta seleccionada no es válida", http.StatusBadRequest)
+		return
+	}
+	if len([]rune(input.Query)) > 120 {
+		http.Error(w, "La búsqueda no puede superar 120 caracteres", http.StatusBadRequest)
+		return
+	}
+	if len(input.StreamID) > 128 {
+		http.Error(w, "El ID de transmisión no puede superar 128 caracteres", http.StatusBadRequest)
+		return
+	}
+	fromAt, toBefore, err := normalizeEventBounds(input.From, input.To)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	exists, err := s.store.ArchiveExists(ctx, input.Program)
+	if err != nil {
+		http.Error(w, "No se pudo consultar los chats guardados", http.StatusServiceUnavailable)
+		return
+	}
+	if exists {
+		http.Error(w, "Ya existe un chat guardado para ese número de programa", http.StatusConflict)
+		return
+	}
+	events, total, err := s.store.Page(ctx, input.FeedID, input.Query, input.StreamID, fromAt, toBefore, 1000, 0)
+	if err != nil {
+		http.Error(w, "No se pudo leer el historial para guardarlo", http.StatusServiceUnavailable)
+		return
+	}
+	if total == 0 {
+		http.Error(w, "No hay comentarios para guardar con los filtros actuales", http.StatusBadRequest)
+		return
+	}
+	if total > 5000 {
+		http.Error(w, "El chat supera 5000 comentarios; usa una cuenta o búsqueda para acotar lo que vas a guardar", http.StatusRequestEntityTooLarge)
+		return
+	}
+	for offset := len(events); offset < total; offset += 1000 {
+		page, _, pageErr := s.store.Page(ctx, input.FeedID, input.Query, input.StreamID, fromAt, toBefore, 1000, offset)
+		if pageErr != nil {
+			http.Error(w, "No se pudo completar la lectura del historial", http.StatusServiceUnavailable)
+			return
+		}
+		events = append(events, page...)
+	}
+	archive, err := s.store.SaveArchive(ctx, input.Program, events)
+	if err != nil {
+		if strings.Contains(err.Error(), "8 MiB") {
+			http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "No se pudo guardar una copia del chat", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, http.StatusCreated, archive)
+}
+
+func isNumericProgram(program string) bool {
+	for _, char := range program {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return program != ""
+}
+
+func (s *workerService) handleGetEventArchive(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id < 1 {
+		http.Error(w, "El identificador del chat guardado no es válido", http.StatusBadRequest)
+		return
+	}
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	archive, err := s.store.Archive(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, "No se pudo abrir el chat guardado", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"archive": archive})
+}
+
+func (s *workerService) handleDeleteEventArchive(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id < 1 {
+		http.Error(w, "El identificador del chat guardado no es válido", http.StatusBadRequest)
+		return
+	}
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	deleted, err := s.store.DeleteArchive(ctx, id)
+	if err != nil {
+		http.Error(w, "No se pudo borrar el chat guardado", http.StatusServiceUnavailable)
+		return
+	}
+	if !deleted {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"state": "deleted"})
 }
 
 func (s *workerService) handleCaptureEvent(w http.ResponseWriter, r *http.Request) {
@@ -269,13 +859,14 @@ func (s *workerService) handleCaptureEvent(w http.ResponseWriter, r *http.Reques
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	var input struct {
-		FeedID     string `json:"feedId"`
-		SourceID   string `json:"sourceId"`
-		ExternalID string `json:"externalId"`
-		StreamID   string `json:"streamId"`
-		Author     string `json:"author"`
-		Message    string `json:"message"`
-		EventAt    string `json:"eventAt"`
+		FeedID        string `json:"feedId"`
+		SourceID      string `json:"sourceId"`
+		ExternalID    string `json:"externalId"`
+		StreamID      string `json:"streamId"`
+		ParticipantID string `json:"participantId"`
+		Author        string `json:"author"`
+		Message       string `json:"message"`
+		EventAt       string `json:"eventAt"`
 	}
 	if err := decoder.Decode(&input); err != nil {
 		http.Error(w, "El evento recibido no tiene un formato válido", http.StatusBadRequest)
@@ -289,9 +880,10 @@ func (s *workerService) handleCaptureEvent(w http.ResponseWriter, r *http.Reques
 	input.SourceID = strings.ToLower(strings.TrimSpace(input.SourceID))
 	input.ExternalID = strings.TrimSpace(input.ExternalID)
 	input.StreamID = strings.TrimSpace(input.StreamID)
+	input.ParticipantID = strings.TrimSpace(input.ParticipantID)
 	author := strings.TrimSpace(input.Author)
 	message := strings.TrimSpace(input.Message)
-	if (input.FeedID != "a" && input.FeedID != "b") || !validEventSourceID(input.SourceID) ||
+	if (input.FeedID != "a" && input.FeedID != "b") || !validEventSourceID(input.SourceID) || !validParticipantID(input.SourceID, input.ParticipantID) ||
 		len(input.ExternalID) > 256 || input.StreamID == "" || len(input.StreamID) > 128 ||
 		author == "" || len([]rune(author)) > 160 || message == "" || len([]rune(message)) > 4096 {
 		http.Error(w, "El evento excede los límites o la cuenta/origen no es válido", http.StatusBadRequest)
@@ -311,9 +903,12 @@ func (s *workerService) handleCaptureEvent(w http.ResponseWriter, r *http.Reques
 	eventTime := eventAt.Format(time.RFC3339Nano)
 	dedupKey := "id:" + input.ExternalID
 	if input.ExternalID == "" {
-		fingerprint := sha256.Sum256([]byte(strings.Join([]string{
-			input.SourceID, input.FeedID, input.StreamID, author, message, eventTimeForFingerprint,
-		}, "\x00")))
+		fingerprintParts := []string{input.SourceID, input.FeedID, input.StreamID}
+		if input.ParticipantID != "" {
+			fingerprintParts = append(fingerprintParts, "participant:"+input.ParticipantID)
+		}
+		fingerprintParts = append(fingerprintParts, author, message, eventTimeForFingerprint)
+		fingerprint := sha256.Sum256([]byte(strings.Join(fingerprintParts, "\x00")))
 		dedupKey = "hash:" + hex.EncodeToString(fingerprint[:])
 	}
 
@@ -323,7 +918,7 @@ func (s *workerService) handleCaptureEvent(w http.ResponseWriter, r *http.Reques
 	defer cancel()
 	stored, inserted, err := s.store.AddCaptured(ctx, capturedEvent{
 		FeedID: input.FeedID, SourceID: input.SourceID, ExternalID: input.ExternalID,
-		StreamID: input.StreamID, Author: author, Message: message, EventAt: eventTime,
+		StreamID: input.StreamID, ParticipantID: input.ParticipantID, Author: author, Message: message, EventAt: eventTime,
 		DedupKey: dedupKey,
 	})
 	if err != nil {
@@ -341,7 +936,36 @@ func (s *workerService) handleCaptureEvent(w http.ResponseWriter, r *http.Reques
 	s.feeds[input.FeedID] = feed
 	s.lastSaved = stored.CreatedAt
 	s.mu.Unlock()
+	s.facebookOverlay.broadcast(stored)
 	writeJSON(w, http.StatusCreated, map[string]any{"state": "saved", "event": stored})
+}
+
+func validParticipantID(sourceID, participantID string) bool {
+	if participantID == "" {
+		return true
+	}
+	if len(participantID) > 128 {
+		return false
+	}
+	if strings.HasPrefix(sourceID, "facebook:") {
+		if len(participantID) < 6 || len(participantID) > 32 {
+			return false
+		}
+		for _, char := range participantID {
+			if char < '0' || char > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	for _, char := range participantID {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == ':' || char == '_' || char == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func validEventSourceID(sourceID string) bool {
@@ -384,6 +1008,60 @@ func (s *workerService) handleDeleteEvent(w http.ResponseWriter, r *http.Request
 	}
 	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]string{"state": "deleted"})
+}
+
+func (s *workerService) handleFeatureComment(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1024)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var input struct {
+		EventID   int64 `json:"eventId"`
+		ArchiveID int64 `json:"archiveId,omitempty"`
+	}
+	if err := decoder.Decode(&input); err != nil || input.EventID < 1 || input.ArchiveID < 0 {
+		http.Error(w, "El comentario que quieres destacar no es válido", http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		http.Error(w, "La solicitud contiene datos adicionales o inválidos", http.StatusBadRequest)
+		return
+	}
+
+	s.storageMu.Lock()
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	var event syntheticEvent
+	var err error
+	if input.ArchiveID > 0 {
+		var archive eventArchive
+		archive, err = s.store.Archive(ctx, input.ArchiveID)
+		if err == nil {
+			found := false
+			for _, archivedEvent := range archive.Events {
+				if archivedEvent.ID == input.EventID {
+					event = archivedEvent
+					found = true
+					break
+				}
+			}
+			if !found {
+				err = sql.ErrNoRows
+			}
+		}
+	} else {
+		event, err = s.store.EventByID(ctx, input.EventID)
+	}
+	cancel()
+	s.storageMu.Unlock()
+	if errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, "No se pudo leer el comentario para destacarlo", http.StatusServiceUnavailable)
+		return
+	}
+	featured := s.facebookOverlay.setFeatured(event, input.ArchiveID)
+	writeJSON(w, http.StatusOK, map[string]any{"state": "featured", "featured": featured})
 }
 
 func (s *workerService) handleDeleteAllEvents(w http.ResponseWriter, r *http.Request) {
@@ -496,6 +1174,7 @@ func (s *workerService) handleSimulatedComment(w http.ResponseWriter, r *http.Re
 	s.feeds[input.FeedID] = feed
 	s.lastSaved = event.CreatedAt
 	s.mu.Unlock()
+	s.facebookOverlay.broadcast(event)
 	writeJSON(w, http.StatusCreated, map[string]any{"event": event})
 }
 
@@ -702,6 +1381,8 @@ func (s *workerService) handleRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.restoreMu.Lock()
+	defer s.restoreMu.Unlock()
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
 	fileName, _, err := s.createLocalBackup(ctx)
@@ -713,6 +1394,8 @@ func (s *workerService) handleRestore(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No se pudo restaurar el respaldo; la copia previa se conservó en backups\\"+fileName+": "+err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
+	ruloReloadErr := s.rulo.reloadAfterRestore(ctx)
+	spotifyAuthorizationCleared := s.spotify.reloadAfterRestore(ctx)
 	if err := s.welcome.reload(); err != nil {
 		http.Error(w, "La base se restauró, pero no se pudo recargar la configuración del módulo", http.StatusServiceUnavailable)
 		return
@@ -726,10 +1409,16 @@ func (s *workerService) handleRestore(w http.ResponseWriter, r *http.Request) {
 		s.feeds[id] = feed
 	}
 	s.mu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]string{
-		"state":             "restored",
-		"restoredFile":      filepath.Base(header.Filename),
-		"beforeRestoreFile": fileName,
+	if ruloReloadErr != nil {
+		http.Error(w, "La base se restauró, pero no se pudo guardar el apagado de la conversación IA en vivo. Rulo permanece apagado en esta sesión; corrige la base antes de reiniciar.", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"state":                       "restored",
+		"restoredFile":                filepath.Base(header.Filename),
+		"beforeRestoreFile":           fileName,
+		"spotifyAuthorizationCleared": spotifyAuthorizationCleared,
+		"message":                     "Se omitió el despacho histórico; la conversación IA y la cola Spotify quedaron deshabilitadas. Inicia un programa nuevo y vuelve a conectar Spotify para reanudar pedidos.",
 	})
 }
 

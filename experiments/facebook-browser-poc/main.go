@@ -22,6 +22,7 @@ import (
 	"github.com/chromedp/cdproto/browser"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/remote"
 )
@@ -37,6 +38,7 @@ type account struct {
 	id       string
 	feedID   string
 	port     int
+	targetID target.ID
 	proc     *exec.Cmd
 	cancel   context.CancelFunc
 	debugURL string
@@ -45,6 +47,12 @@ type account struct {
 
 type debuggerVersion struct {
 	WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
+}
+
+type debuggerTarget struct {
+	ID   target.ID `json:"id"`
+	Type string    `json:"type"`
+	URL  string    `json:"url"`
 }
 
 type domProbe struct {
@@ -57,11 +65,12 @@ type domProbe struct {
 }
 
 type capturedComment struct {
-	ExternalID string `json:"externalId"`
-	StreamID   string `json:"streamId"`
-	Author     string `json:"author"`
-	Message    string `json:"message"`
-	EventAt    string `json:"eventAt"`
+	ExternalID    string `json:"externalId"`
+	ParticipantID string `json:"participantId"`
+	StreamID      string `json:"streamId"`
+	Author        string `json:"author"`
+	Message       string `json:"message"`
+	EventAt       string `json:"eventAt"`
 }
 
 func main() {
@@ -73,16 +82,21 @@ func main() {
 
 func run(args []string) error {
 	flags := flag.NewFlagSet("facebook-browser-poc", flag.ContinueOnError)
-	browserChoice := flags.String("browser", "edge", "navegador instalado: edge o brave")
+	browserChoice := flags.String("browser", "brave", "navegador instalado: brave o edge")
+	accountChoice := flags.Int("account", 0, "cuenta a abrir: 1 o 2; 0 abre ambas")
 	cortexURL := flags.String("cortex-url", "http://127.0.0.1:17845", "URL local del panel Cortex Go")
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	if *accountChoice < 0 || *accountChoice > 2 {
+		return errors.New("-account debe ser 1, 2 o 0 para abrir ambas")
 	}
 	if err := validateCortexURL(*cortexURL); err != nil {
 		return err
 	}
 
-	browserPath, err := findBrowser(strings.ToLower(strings.TrimSpace(*browserChoice)))
+	choice := strings.ToLower(strings.TrimSpace(*browserChoice))
+	browserPath, err := findBrowser(choice)
 	if err != nil {
 		return err
 	}
@@ -102,12 +116,23 @@ func run(args []string) error {
 		{label: "Cuenta 1", id: "cuenta-1", feedID: "a", port: firstDebugPort},
 		{label: "Cuenta 2", id: "cuenta-2", feedID: "b", port: secondDebugPort},
 	}
+	if *accountChoice != 0 {
+		accounts = accounts[*accountChoice-1 : *accountChoice]
+	}
 
-	fmt.Println("Prueba técnica de dos sesiones Facebook con perfiles aislados")
+	browserLabel := "Brave"
+	if choice == "edge" {
+		browserLabel = "Edge"
+	}
+	fmt.Printf("Prueba técnica de %d sesión(es) Facebook con perfiles aislados en %s\n", len(accounts), browserLabel)
 	fmt.Println("El navegador conserva las cookies en LOCALAPPDATA, fuera del repositorio.")
-	fmt.Println("Inicia sesión manualmente en cada ventana y, en esa misma pestaña, abre Live Producer > Comentarios.")
+	fmt.Println("Cada perfil abre una sola pestaña observada en Facebook; inicia sesión y abre Live Producer > Comentarios.")
 	fmt.Println("Solo envía comentarios nuevos a la base local de Cortex Go; no imprime nombres ni textos en la consola.")
-	fmt.Println("Cierra con Ctrl+C para cerrar los dos navegadores de forma ordenada.")
+	if len(accounts) == 1 {
+		fmt.Printf("Solo se abrirá %s. Cierra con Ctrl+C para cerrar el navegador de forma ordenada.\n", accounts[0].label)
+	} else {
+		fmt.Println("Cierra con Ctrl+C para cerrar los dos navegadores de forma ordenada.")
+	}
 
 	for _, a := range accounts {
 		if err := launch(ctx, browserPath, profileRoot, a); err != nil {
@@ -179,6 +204,7 @@ func launch(ctx context.Context, browserPath, profileRoot string, a *account) er
 		"--user-data-dir="+profileDir,
 		"--remote-debugging-address=127.0.0.1",
 		"--remote-debugging-port="+strconv.Itoa(a.port),
+		"--new-window",
 		"--no-first-run",
 		"--no-default-browser-check",
 		"https://www.facebook.com/",
@@ -193,6 +219,11 @@ func launch(ctx context.Context, browserPath, profileRoot string, a *account) er
 		return fmt.Errorf("no se pudo conectar con %s: %w", a.label, err)
 	}
 	a.debugURL = debugURL
+	targetID, err := waitForFacebookTarget(ctx, a.port, 10*time.Second)
+	if err != nil {
+		return fmt.Errorf("no se encontró la pestaña inicial de Facebook para %s: %w", a.label, err)
+	}
+	a.targetID = targetID
 	return nil
 }
 
@@ -206,7 +237,7 @@ func ensurePortFree(port int) error {
 
 func connectAndObserve(parent context.Context, a *account, cortexURL string) error {
 	allocator, cancelAllocator := remote.NewAllocator(parent, a.debugURL)
-	ctx, cancelTarget := chromedp.NewContext(allocator)
+	ctx, cancelTarget := chromedp.NewContext(allocator, chromedp.WithTargetID(a.targetID))
 	a.cancel = func() {
 		cancelTarget()
 		cancelAllocator()
@@ -260,7 +291,8 @@ func postCapturedComment(parent context.Context, cortexURL string, a *account, c
 	body, err := json.Marshal(map[string]string{
 		"feedId": a.feedID, "sourceId": "facebook:" + a.id,
 		"externalId": comment.ExternalID, "streamId": comment.StreamID,
-		"author": comment.Author, "message": comment.Message, "eventAt": comment.EventAt,
+		"participantId": comment.ParticipantID,
+		"author":        comment.Author, "message": comment.Message, "eventAt": comment.EventAt,
 	})
 	if err != nil {
 		return false, err
@@ -352,6 +384,43 @@ func waitForDebugger(parent context.Context, port int, timeout time.Duration) (s
 			return "", parent.Err()
 		case <-deadline.C:
 			return "", fmt.Errorf("el navegador no habilitó el canal local de control en %s", endpoint)
+		case <-ticker.C:
+		}
+	}
+}
+
+func waitForFacebookTarget(parent context.Context, port int, timeout time.Duration) (target.ID, error) {
+	client := &http.Client{
+		Timeout:   600 * time.Millisecond,
+		Transport: &http.Transport{Proxy: nil},
+	}
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(150 * time.Millisecond)
+	defer ticker.Stop()
+	endpoint := "http://127.0.0.1:" + strconv.Itoa(port) + "/json/list"
+	for {
+		request, err := http.NewRequestWithContext(parent, http.MethodGet, endpoint, nil)
+		if err == nil {
+			response, requestErr := client.Do(request)
+			if requestErr == nil {
+				var targets []debuggerTarget
+				decodeErr := json.NewDecoder(io.LimitReader(response.Body, 128*1024)).Decode(&targets)
+				_ = response.Body.Close()
+				if decodeErr == nil {
+					for _, candidate := range targets {
+						if candidate.Type == "page" && candidate.ID != "" && isFacebookURL(candidate.URL) {
+							return candidate.ID, nil
+						}
+					}
+				}
+			}
+		}
+		select {
+		case <-parent.Done():
+			return "", parent.Err()
+		case <-deadline.C:
+			return "", errors.New("Brave no publicó una pestaña Facebook por DevTools local")
 		case <-ticker.C:
 		}
 	}
@@ -458,6 +527,17 @@ func observerScript(accountID string) string {
     const labelName = aria.match(/^(?:comment|comentario)(?:\s+(?:from|by|de|por))\s+(.+)$/i)?.[1] || '';
     const authorName = author?.name || normalize(labelName);
     if (!authorName || isActionOrTime(authorName)) return null;
+    function stableParticipantID(rawURL) {
+      if (!rawURL) return '';
+      try {
+        const url = new URL(rawURL);
+        if (url.hostname !== 'facebook.com' && !url.hostname.endsWith('.facebook.com')) return '';
+        const pathMatch = url.pathname.match(/^\/people\/[^/]+\/(\d+)\/?$/i) || url.pathname.match(/^\/(\d+)\/?$/);
+        const candidate = url.searchParams.get('id') || pathMatch?.[1] || '';
+        return /^\d{6,32}$/.test(candidate) ? candidate : '';
+      } catch (_) { return ''; }
+    }
+    const participantId = stableParticipantID(author?.href || '');
     const directText = [...row.querySelectorAll('[dir="auto"]')]
       .filter(node => node.getClientRects().length && !node.querySelector('[dir="auto"]'))
       .map(node => normalize(node.innerText || node.textContent))
@@ -475,7 +555,7 @@ func observerScript(accountID string) string {
       const dataId = row.getAttribute('data-id') || row.id || '';
       if (/^[0-9_]{6,}$/.test(dataId)) externalId = dataId;
     }
-    return { externalId, streamId, author: authorName, message, eventAt: '' };
+    return { externalId, participantId, streamId, author: authorName, message, eventAt: '' };
   }
   function schedule() {
     if (!state.timer) state.timer = setTimeout(scan, 500);

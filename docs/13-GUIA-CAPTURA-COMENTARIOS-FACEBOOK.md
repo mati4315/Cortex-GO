@@ -1,6 +1,6 @@
 # Guía de captura de dos directos de Facebook desde Cortex Go
 
-**Estado:** prototipo externo Edge/Brave conectado al API local; validación manual pendiente en la PC de escritorio.  \
+**Estado:** prototipo externo y persistencia SQLite integrados; historial completo en Go. Falta la autenticación manual y validar comentarios reales en la PC donde corre el capturador.  \
 **Referencia funcional:** el módulo de captura del Cortex anterior.  \
 **Alcance:** reconstrucción desde cero; no migrar ni copiar el código anterior. SocialStream Ninja queda excluido.  \
 **Retención elegida:** nombres y textos se conservan en la base activa hasta borrado manual. Los respaldos locales se pueden revisar y borrar desde Cortex; las copias exportadas a otro lugar deben borrarse por separado.
@@ -61,7 +61,7 @@ Una sola ventana visible tampoco garantiza un solo proceso o un único archivo f
 
 ## Vistas de Facebook y cantidad de pestañas
 
-En el Cortex anterior, el botón de Live Producer abría una vista de comentarios y otra de estadísticas para cada enlace. Para este primer módulo nuevo, la vista de comentarios es la necesaria. La vista de estadísticas debe ser opcional y agregarse solo si se confirma que sus datos siguen siendo parte del uso habitual.
+En el Cortex anterior, el botón de Live Producer abría una vista de comentarios y otra de estadísticas para cada enlace. Para este primer módulo nuevo, la vista de comentarios es la necesaria. La vista de estadísticas nativa de Live Producer debe ser opcional y agregarse solo si se confirma que sus datos siguen siendo parte del uso habitual. Esta es una superficie distinta de las estadísticas agregadas del historial de Cortex que el propietario confirmó después para Rulo; esa consulta usa SQLite y no requiere abrir las métricas de Live Producer.
 
 Las vistas pueden estar en pestañas internas o en dos paneles dentro de Cortex; no hace falta que estén enfocadas para capturar si el motor continúa ejecutando la página. Debe mostrarse cuál cuenta corresponde a cada sesión. No mezclar ambas cuentas en un mismo perfil del navegador ni confiar solo en el nombre escrito: identificar la cuenta iniciada y avisar si no coincide con la etiqueta.
 
@@ -79,9 +79,11 @@ flowchart LR
     G --> P[Panel: estado y comentarios]
 ```
 
-Campos mínimos por comentario: cuenta/origen, directo, ID de Facebook si está disponible, nombre mostrado, texto, hora original si está disponible, hora de captura y estado de entrega. Un identificador estable evita guardar de nuevo una fila cuando Facebook la vuelve a renderizar. Si Facebook no expone ID, usar una huella compuesta y acotada a cuenta/directo, y documentar que puede haber casos ambiguos.
+Campos mínimos por comentario: cuenta/origen, directo, ID del comentario de Facebook si está disponible, nombre mostrado, texto, hora original si está disponible, hora de captura y estado de entrega. El capturador también extrae un `participantId` privado solo cuando el enlace del perfil del autor contiene un ID numérico explícito; las URLs personalizadas quedan sin identidad estable y el nombre visible nunca se usa como sustituto. El servidor conserva ese campo en el evento SQLite para las habilidades que lo necesiten, pero no lo devuelve al historial, al overlay ni a la IA. Borrarlo en el historial lo retira de la base activa junto al evento; las copias de seguridad anteriores pueden conservarlo y deben borrarse por separado. El ID externo del comentario es la clave primaria de deduplicación; si falta, la huella incluye el `participantId` solo cuando está disponible, además de origen, cuenta, directo, nombre, texto y hora original. Sin ID de comentario ni identidad estable, la huella puede confundir comentarios idénticos de autores homónimos.
 
 SQLite debe aceptar el comentario antes de que el panel lo marque como guardado. Si el servicio de almacenamiento falla, Cortex informa el error y conserva el evento pendiente en memoria con límite; no debe mostrar éxito falso. La base y los respaldos contienen datos privados y siguen excluidos del GitHub público.
+
+Los comentarios guardados se consultan en `/rulo-chat-historial.html` o `/modules/facebook/history`. La pantalla comparte el registro SQLite de eventos, busca por autor/texto, filtra por cuenta, fecha e ID de transmisión, pagina el historial y muestra un aviso de mensajes nuevos sin interrumpir la lectura. Permite borrar registros, guardar chats por número de programa, descargar CSV compatible con Excel y crear un respaldo. Las copias de chats tienen su propio borrado manual dentro de la misma SQLite. No se importan comentarios del Cortex anterior. Ver [Historial de Facebook](19-MODULO-HISTORIAL-FACEBOOK.md).
 
 Las cookies y perfiles del navegador son credenciales. Guardarlos solo en el almacenamiento local privado del equipo donde corra el capturador, fuera de Git y sin sincronizarlos a la otra PC. El host puede cambiar según qué equipo esté disponible; no copies sesiones de Facebook al migrar el proyecto.
 
@@ -127,13 +129,14 @@ Por eso el panel debe diferenciar entre “navegador abierto”, “página de c
 
 ### 3. Integración gradual
 
-Después de validar captura y guardado, conectar el historial/selección de comentarios que el usuario necesita. Luego integrar Rulo, Spotify y las demás funciones, una por una. Dejar OBS/Trigger Studio para cuando la captura haya demostrado estabilidad; al principio sus acciones siguen siendo manuales.
+El historial completo y sus controles de lectura/retención ya están conectados a SQLite. El capturador puede incluir un ID de perfil numérico privado; falta comprobarlo con comentarios reales. Sigue la integración por etapas de Rulo/Spotify y luego Cdelu y las capacidades del lanzamiento acordado. La escena OBS y las acciones de transmisión requieren aceptación aparte; ninguna queda validada por compilar el capturador.
 
 ## Criterios de aceptación
 
 - El operador introduce un enlace por cuenta y ve con claridad cuál sesión lo está atendiendo.
 - Las cuentas permanecen separadas y la falta de sesión o fallo de una no tapa el estado de la otra.
 - Cortex detecta comentarios nuevos de las dos cuentas, evita duplicados y conserva los datos tras cerrar y abrir la aplicación.
+- El historial completo consulta los comentarios persistidos, permite encontrar por autor/texto/cuenta y borrar con claridad los datos activos.
 - La pantalla de salud diferencia página lista, espera sin actividad, captura detenida y error de guardado.
 - La captura base no requiere SocialStream Ninja, no depende de módulos Node separados y todavía no ejecuta acciones de OBS.
 - Los perfiles y cookies no se copian entre equipos. Los comentarios y la base local quedan fuera del repositorio público y no se sincronizan automáticamente a otra PC.
@@ -154,9 +157,9 @@ La implementación nueva debe recrear la función con la arquitectura elegida pa
 
 ## Estado del prototipo y cierre pendiente
 
-El prototipo de [`experiments/facebook-browser-poc`](../experiments/facebook-browser-poc/README.md) abre dos perfiles Edge o Brave aislados, guarda las sesiones bajo `%LOCALAPPDATA%` y limita DevTools a `127.0.0.1`. La persona inicia sesión y abre manualmente Live Producer > Comentarios en cada ventana. La captura establece una línea base, observa cambios del DOM y vuelve a explorar cada cinco segundos; solo intenta enviar comentarios nuevos al API local de Cortex.
+El prototipo de [`experiments/facebook-browser-poc`](../experiments/facebook-browser-poc/README.md) abre Brave por defecto con dos perfiles aislados, guarda las sesiones bajo `%LOCALAPPDATA%` y limita DevTools a `127.0.0.1`. Se conecta a la pestaña Facebook inicial de cada perfil en vez de crear una pestaña en blanco de captura. La persona inicia sesión y abre manualmente Live Producer > Comentarios en cada ventana. La captura establece una línea base, observa cambios del DOM y vuelve a explorar cada cinco segundos; solo intenta enviar comentarios nuevos al API local de Cortex. Edge sigue disponible como alternativa explícita.
 
-El API guarda origen/cuenta, directo, ID externo cuando está disponible, nombre, texto, hora original y hora de captura. Deduplica por ID externo o huella. El panel presenta métricas por cuenta y permite borrar comentarios de la base activa uno a uno o todo el historial. Los logs del prototipo no imprimen nombres ni textos.
+El API guarda origen/cuenta, directo, ID externo cuando está disponible, `participantId` solo si el DOM expone el ID numérico del perfil, nombre, texto, hora original y hora de captura. Deduplica por ID externo o huella. El panel presenta métricas por cuenta y permite borrar comentarios de la base activa uno a uno o todo el historial. Los logs del prototipo no imprimen IDs, nombres ni textos. El `participantId` aún no es una identidad enlazada de Cdelu: la reserva de lotería permanece desactivada hasta comprobar el enlace y el contrato remoto.
 
 Esto todavía no es la experiencia integrada definida en esta guía: Edge/Brave abre ventanas externas, el prototipo no confirma la identidad de la cuenta y la PC de escritorio aún no se ha validado. No se ha confirmado inicio de sesión/2FA, persistencia tras reiniciar, selectores con comentarios reales, captura simultánea, recuperación de errores ni uso durante un directo. CEF y la integración de los navegadores en Cortex siguen pendientes.
 

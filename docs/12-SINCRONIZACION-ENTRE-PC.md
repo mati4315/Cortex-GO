@@ -58,7 +58,7 @@ Para videos, bibliotecas multimedia u otros assets grandes, evaluar almacenamien
 1. **Hecho:** revisar la lista pública, excluir capturas, datos personales, rutas locales, `.env`, bases, logs y ejecutables.
 2. **Hecho:** revisar `.gitignore` y configurar la identidad de commit con un correo `noreply` de GitHub.
 3. **Hecho:** crear y publicar el primer commit limpio en `main`.
-4. **Pendiente:** en la notebook, instalar Go compatible, clonar el remoto y ejecutar `go test ./...` y `go build`.
+4. **Pendiente:** en la notebook, instalar Go compatible, clonar el remoto y ejecutar `go build`.
 5. **Pendiente:** probar el ciclo PC → notebook → PC con un cambio inocuo en un documento.
 6. **Pendiente:** instalar Syncthing en ambas PCs y probar la carpeta privada con datos ficticios antes de conectarla a la base real o las claves.
 

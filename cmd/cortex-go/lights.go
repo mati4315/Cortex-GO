@@ -76,6 +76,7 @@ type lightsService struct {
 	previewOwnerID string
 	blackoutActive bool
 	clients        map[string]*lightsClient
+	lastActivityAt string
 }
 
 func defaultLightsConfig() lightsConfig {
@@ -147,8 +148,24 @@ func (s *lightsService) handleState(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"config": config, "savedConfig": savedConfig, "connections": connections,
-		"blackout": blackoutActive, "previewing": previewing,
+		"blackout": blackoutActive, "previewing": previewing, "lastActivityAt": s.lastActivitySnapshot(),
 	})
+}
+
+func (s *lightsService) lastActivitySnapshot() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastActivityAt
+}
+
+func (s *lightsService) markActivityLocked() {
+	s.lastActivityAt = time.Now().UTC().Format(time.RFC3339Nano)
+}
+
+func (s *lightsService) statusSnapshot() (lightsConnectionStatus, bool, bool, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.connectionStatusLocked(), s.blackoutActive, s.previewConfig != nil, s.lastActivityAt
 }
 
 func (s *lightsService) effectiveConfigLocked() lightsConfig {
@@ -176,6 +193,7 @@ func (s *lightsService) handleBlackout(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	s.blackoutActive = *request.Active
+	s.markActivityLocked()
 	active := s.blackoutActive
 	s.mu.Unlock()
 	payload := map[string]bool{"active": active}
@@ -250,6 +268,7 @@ func (s *lightsService) handlePreview(w http.ResponseWriter, r *http.Request) {
 	}
 	s.previewConfig = &next
 	s.previewOwnerID = clientID
+	s.markActivityLocked()
 	s.mu.Unlock()
 	s.broadcast("configUpdate", next, "")
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "previewing": true, "config": next})
@@ -317,6 +336,7 @@ func (s *lightsService) updateConfig(ctx context.Context, patch map[string]json.
 	s.config = next
 	s.previewConfig = nil
 	s.previewOwnerID = ""
+	s.markActivityLocked()
 	return next, nil
 }
 
@@ -419,11 +439,13 @@ func (s *lightsService) handleBeat(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	client, connected := s.clients[request.ClientID]
-	s.mu.Unlock()
 	if !connected {
+		s.mu.Unlock()
 		http.Error(w, "La página que envió el pulso ya no está conectada", http.StatusConflict)
 		return
 	}
+	s.markActivityLocked()
+	s.mu.Unlock()
 	if request.Origin != "dashboard" && request.Origin != "overlay" {
 		request.Origin = client.typeName
 	}

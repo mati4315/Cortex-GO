@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#1b222c">
+  <title>Cortex Go | Historial de Facebook</title>
+  <link rel="stylesheet" href="/modules/facebook/css/history.css">
+  <script src="/modules/facebook/js/history.js" defer></script>
+</head>
+<body>
+  <header id="header">
+    <button id="headerToggle" class="icon-btn" type="button" title="Ocultar el encabezado" aria-label="Mostrar u ocultar el encabezado" aria-pressed="false">
+      <svg class="icon-collapse" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14.5 6-6 6 6"/></svg>
+      <svg class="icon-expand" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9.5 6 6 6-6"/></svg>
+    </button>
+    <h1><span>Cortex Go</span> | Historial de Facebook</h1>
+    <div class="font-controls" role="group" aria-label="Tamaño de letra">
+      <button id="fontDown" class="icon-btn" type="button" title="Achicar la letra" aria-label="Achicar la letra"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.4 15.4 5.1 5.1m-12.9-10h5.8"/></svg></button>
+      <button id="fontReset" class="ghost-btn" type="button">Restablecer <span id="fontLevel">110%</span></button>
+      <button id="fontUp" class="icon-btn" type="button" title="Agrandar la letra" aria-label="Agrandar la letra"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.4 15.4 5.1 5.1m-12.9-10h5.8m-2.9-2.9v5.8"/></svg></button>
+    </div>
+    <button id="moreOptions" class="more-btn" type="button" aria-expanded="false" aria-controls="toolbar">Más opciones</button>
+    <button id="themeToggle" class="icon-btn" type="button" title="Cambiar a tema claro" aria-label="Cambiar de tema" aria-pressed="false">
+      <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.7m0 13.4v2.7m-9.4-9.4h2.7m13.4 0h2.7M5.4 5.4l1.9 1.9m9.4 9.4 1.9 1.9m0-13.2-1.9 1.9m-9.4 9.4-1.9 1.9"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.6A8.6 8.6 0 0 1 9.4 4 8.6 8.6 0 1 0 20 14.6Z"/></svg>
+    </button>
+  </header>
+
+  <main id="list" aria-label="Comentarios detectados"></main>
+  <button id="newCommentsNotice" class="new-comments" type="button" hidden></button>
+
+  <footer id="statusBar" aria-live="polite">
+    <span id="wsState" class="chip warn">Conectando…</span>
+    <span id="counter">Cargando comentarios…</span>
+    <span id="lastUpdate"></span>
+  </footer>
+
+  <section id="toolbar" class="collapsed" aria-label="Opciones del historial">
+    <div class="toolbar-status">
+      <span class="chip" id="retentionNote">Se conserva hasta que lo borres</span>
+      <a class="dash-link" href="/rulo-chat-overlay.html" target="_blank" rel="noopener">Overlay OBS</a>
+      <a class="dash-link" href="/">Panel Cortex</a>
+    </div>
+    <input id="filterText" type="search" maxlength="120" placeholder="Buscar en comentarios, usuarios o transmisiones" aria-label="Buscar en el historial">
+    <input id="filterStream" type="search" maxlength="128" placeholder="ID de transmisión" aria-label="Filtrar por ID de transmisión">
+    <select id="filterSource" aria-label="Filtrar por cuenta">
+      <option value="">Todas las cuentas</option>
+      <option value="a">Cuenta 1</option>
+      <option value="b">Cuenta 2</option>
+    </select>
+    <label class="date-filter">Desde <input id="filterFrom" type="date" aria-label="Fecha inicial"></label>
+    <label class="date-filter">Hasta <input id="filterTo" type="date" aria-label="Fecha final"></label>
+    <label class="check"><input id="autoRefresh" type="checkbox" checked> Actualizar automáticamente</label>
+    <button id="refreshEvents" type="button">Actualizar</button>
+    <button id="clearFilters" type="button">Limpiar filtros</button>
+    <button id="saveCurrentChat" type="button">Guardar chat actual</button>
+    <select id="savedChatPrograms" aria-label="Abrir chat guardado"><option value="">Chats guardados…</option><option value="__current__">Volver al chat actual</option></select>
+    <button id="deleteSavedChat" class="danger" type="button" disabled>Borrar chat guardado</button>
+    <button id="exportEvents" type="button">Exportar CSV</button>
+    <button id="createBackup" type="button">Crear respaldo</button>
+      <button id="clearHistory" class="danger" type="button">Borrar historial activo</button>
+    <div class="pagination" role="group" aria-label="Páginas del historial">
+      <button id="newerPage" type="button" disabled>Más recientes</button>
+      <span id="pageLabel">Página 1</span>
+      <button id="olderPage" type="button" disabled>Más antiguos</button>
+    </div>
+    <small id="archiveStatus" class="archive-note">Los chats guardados son copias independientes y permanecen hasta que los borres.</small>
+    <small id="backupStatus" class="archive-note">El respaldo local es una copia aparte y puede conservar comentarios que luego borres.</small>
+  </section>
+
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

@@ -48,6 +48,7 @@ type gitPreview struct {
 	Ahead        int         `json:"ahead"`
 	Behind       int         `json:"behind"`
 	PreviewBytes int         `json:"previewBytes"`
+	IgnoredCount int         `json:"ignoredCount"`
 }
 
 type gitPublishRequest struct {
@@ -175,7 +176,11 @@ func (g *gitSyncManager) Publish(ctx context.Context, request gitPublishRequest)
 		return gitPublishResult{}, errors.New("la lista de archivos a publicar cambió; volvé a revisarla")
 	}
 
-	if _, err := g.run(ctx, "diff", "--check"); err != nil {
+	checkArguments := []string{"diff", "--check", "--"}
+	for _, entry := range snapshot.Files {
+		checkArguments = append(checkArguments, entry.Path)
+	}
+	if _, err := g.run(ctx, checkArguments...); err != nil {
 		return gitPublishResult{}, fmt.Errorf("corregí los espacios señalados antes de publicar: %w", err)
 	}
 	arguments := []string{"add", "--"}
@@ -273,56 +278,45 @@ func (g *gitSyncManager) loadSnapshot(ctx context.Context) (gitStatusSnapshot, e
 	if err != nil {
 		return gitStatusSnapshot{}, err
 	}
+	entries, hasStaged, ignoredCount := filterGitPreviewEntries(entries)
 
 	preview := gitPreview{
-		Repository: publicGitHubRepository,
-		Branch:     branch,
-		Upstream:   upstream,
-		Changes:    make([]gitChange, 0, len(entries)),
-		HasStaged:  hasStaged,
-		Ahead:      ahead,
-		Behind:     behind,
+		Repository:   publicGitHubRepository,
+		Branch:       branch,
+		Upstream:     upstream,
+		Changes:      make([]gitChange, 0, len(entries)),
+		HasStaged:    hasStaged,
+		Ahead:        ahead,
+		Behind:       behind,
+		IgnoredCount: ignoredCount,
 	}
 	snapshotHash := sha256.New()
 	_, _ = fmt.Fprintf(snapshotHash, "%s\x00%s\x00%s\x00", head, branch, upstream)
 	snapshot := gitStatusSnapshot{Head: head}
 	previewSize := 0
-	allChangesAllowed := true
 	for _, entry := range entries {
-		change := gitChange{Path: entry.Path, Status: entry.Status}
-		if !publishablePath(entry.Path) {
-			change.Review = "Este tipo de archivo no se publica desde Cortex Go."
-			allChangesAllowed = false
-		} else if entry.Staged {
-			change.Review = "Hay cambios preparados en el índice de Git; deshacelos o publicalos manualmente antes de usar este atajo."
-			allChangesAllowed = false
-		} else {
-			content, contentErr := g.readWorkingFile(ctx, entry)
-			if contentErr != nil {
-				change.Review = contentErr.Error()
-				allChangesAllowed = false
-			} else {
-				_, _ = fmt.Fprintf(snapshotHash, "%s\x00%s\x00", entry.Status, entry.Path)
-				_, _ = snapshotHash.Write(content)
-				_, _ = snapshotHash.Write([]byte{0})
-				diff, diffErr := g.fileDiff(ctx, entry, content)
-				if diffErr != nil {
-					change.Review = diffErr.Error()
-					allChangesAllowed = false
-				} else {
-					previewSize += len(diff)
-					if previewSize > maxGitPreviewBytes {
-						change.Review = "La vista previa supera 1 MiB; revisá y publicá estos cambios manualmente."
-						allChangesAllowed = false
-					} else {
-						change.CanPublish = true
-						change.PreviewDiff = diff
-						snapshot.Files = append(snapshot.Files, entry)
-					}
-				}
-			}
+		if entry.Staged || !publishablePath(entry.Path) {
+			preview.IgnoredCount++
+			continue
 		}
-		preview.Changes = append(preview.Changes, change)
+		content, contentErr := g.readWorkingFile(ctx, entry)
+		if contentErr != nil {
+			preview.IgnoredCount++
+			continue
+		}
+		diff, diffErr := g.fileDiff(ctx, entry, content)
+		if diffErr != nil || len(diff) > maxGitPreviewBytes-previewSize {
+			preview.IgnoredCount++
+			continue
+		}
+		previewSize += len(diff)
+		_, _ = fmt.Fprintf(snapshotHash, "%s\x00%s\x00", entry.Status, entry.Path)
+		_, _ = snapshotHash.Write(content)
+		_, _ = snapshotHash.Write([]byte{0})
+		preview.Changes = append(preview.Changes, gitChange{
+			Path: entry.Path, Status: entry.Status, CanPublish: true, PreviewDiff: diff,
+		})
+		snapshot.Files = append(snapshot.Files, entry)
 	}
 	preview.PreviewBytes = previewSize
 	preview.Snapshot = hex.EncodeToString(snapshotHash.Sum(nil))
@@ -336,13 +330,13 @@ func (g *gitSyncManager) loadSnapshot(ctx context.Context) (gitStatusSnapshot, e
 		preview.Message = "Hay commits locales anteriores pendientes de Push. Publicalos manualmente para revisar su contenido."
 	case behind > 0:
 		preview.Message = "GitHub tiene commits que esta carpeta todavía no descargó. Hacé Pull antes de publicar."
-	case len(entries) == 0:
+	case len(snapshot.Files) == 0 && preview.IgnoredCount == 0:
 		preview.Message = "No hay cambios locales para publicar."
-	case !allChangesAllowed:
-		preview.Message = "Hay archivos que este atajo no publicará. Revisá las marcas de la lista y usá Git manualmente si corresponde."
+	case len(snapshot.Files) == 0:
+		preview.Message = fmt.Sprintf("No hay archivos permitidos para publicar; se omitieron automáticamente %d archivos que quedan fuera del commit.", preview.IgnoredCount)
 	default:
 		preview.CanPublish = true
-		preview.Message = "Revisá los archivos y las diferencias. Si los confirmás, se crearán un commit y un Push público."
+		preview.Message = fmt.Sprintf("Revisá los %d archivos permitidos que aparecen abajo. Se omitieron automáticamente %d archivos; no se incluirán en el commit.", len(snapshot.Files), preview.IgnoredCount)
 	}
 	snapshot.Preview = preview
 	return snapshot, nil
@@ -487,9 +481,33 @@ func parseGitStatus(output string) ([]gitStatusEntry, bool, error) {
 	return entries, hasStaged, nil
 }
 
+// filterGitPreviewEntries excludes these local files from both preview and publication.
+func filterGitPreviewEntries(entries []gitStatusEntry) ([]gitStatusEntry, bool, int) {
+	filtered := make([]gitStatusEntry, 0, len(entries))
+	hasStaged := false
+	ignoredCount := 0
+	for _, entry := range entries {
+		if excludedGitPreviewPath(entry.Path) {
+			ignoredCount++
+			continue
+		}
+		filtered = append(filtered, entry)
+		if entry.Staged {
+			hasStaged = true
+		}
+	}
+	return filtered, hasStaged, ignoredCount
+}
+
+func excludedGitPreviewPath(path string) bool {
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
+	return strings.EqualFold(clean, "docs/23-MODULO-SPOTIFY.md") ||
+		strings.EqualFold(clean, "docs/contraseña del obs.txt")
+}
+
 func publishablePath(path string) bool {
 	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
-	if clean == "README.md" || clean == "go.mod" || clean == "go.sum" {
+	if clean == "AGENTS.md" || clean == "README.md" || clean == "go.mod" || clean == "go.sum" {
 		return true
 	}
 	if strings.HasPrefix(clean, "cmd/cortex-go/") {
@@ -518,6 +536,31 @@ func publishablePath(path string) bool {
 		if strings.HasPrefix(clean, "cmd/cortex-go/web/lights/") {
 			switch strings.ToLower(filepath.Ext(clean)) {
 			case ".html", ".css", ".js":
+				return true
+			default:
+				return false
+			}
+		}
+		if strings.HasPrefix(clean, "cmd/cortex-go/web/weather/") {
+			switch strings.ToLower(filepath.Ext(clean)) {
+			case ".html", ".css", ".js":
+				return true
+			default:
+				return false
+			}
+		}
+		if strings.HasPrefix(clean, "cmd/cortex-go/web/facebook/") {
+			switch clean {
+			case "cmd/cortex-go/web/facebook/history.html",
+				"cmd/cortex-go/web/facebook/css/history.css",
+				"cmd/cortex-go/web/facebook/js/history.js",
+				"cmd/cortex-go/web/facebook/overlay.html",
+				"cmd/cortex-go/web/facebook/css/overlay.css",
+				"cmd/cortex-go/web/facebook/js/overlay.js",
+				"cmd/cortex-go/web/facebook/featured.html",
+				"cmd/cortex-go/web/facebook/css/featured.css",
+				"cmd/cortex-go/web/facebook/js/featured.js",
+				"cmd/cortex-go/web/facebook/assets/kangaroo.svg":
 				return true
 			default:
 				return false

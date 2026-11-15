@@ -4,20 +4,25 @@ Reconstrucción nueva de Cortex con servidor y almacenamiento en Go. Bienvenidos
 
 ## Estado
 
-La base operativa está implementada en código: el lanzador recupera Cortex si el proceso principal termina inesperadamente; el servidor usa SQLite con esquema versionado, eventos, deduplicación y borrado manual; el panel es PWA y **Bienvenidos y Banner** y **Luces** ya están integrados en Go.
+La base operativa está implementada en código: el lanzador recupera Cortex si el proceso principal termina inesperadamente; el servidor usa SQLite con esquema versionado, eventos, deduplicación y borrado manual; el panel es PWA e incluye una vista **Estado del directo** para revisar Cortex, OBS, capturas y módulos. **Bienvenidos y Banner**, **Luces**, **Clima y Tiempo** y el **Historial de Facebook** ya están integrados en Go.
 
 La captura Facebook es todavía un prototipo externo de Edge/Brave conectado al API local. La validación manual de login, 2FA, aislamiento y comentarios nuevos en la PC principal sigue pendiente. El panel central solo consulta OBS; Bienvenidos y Banner agrega un cambio de escena local y opcional, desactivado por defecto. Luces genera efectos visuales para una fuente de navegador de OBS; no controla equipos DMX físicos.
 
 ## Estructura
 
 - `cmd/cortex-go/`: punto de entrada del ejecutable.
-- `cmd/cortex-go/web/`: panel central, recursos PWA y pantallas de Bienvenidos y Banner y Luces incluidas dentro del ejecutable.
+- `cmd/cortex-go/web/`: panel central, recursos PWA y pantallas de Bienvenidos y Banner, Luces, Clima y Tiempo e Historial de Facebook incluidas dentro del ejecutable.
 - `experiments/facebook-browser-poc/`: prototipo aislado de captura de Facebook con dos perfiles separados.
-- `docs/`: auditoría, requisitos, arquitectura, guía de captura y [estado de la base operativa](docs/14-BASE-OPERATIVA.md).
+- `docs/`: auditoría, requisitos, módulos, arquitectura, guía de captura y [estado de la base operativa](docs/14-BASE-OPERATIVA.md).
+- [`AGENTS.md`](AGENTS.md): instrucciones permanentes para IAs que trabajen en Cortex Go.
 - Las capturas visuales de referencia se conservan localmente y quedan fuera del repositorio público.
 - `docs/diagramas/historicos/`: imágenes de diagramas anteriores, archivadas para evitar confundirlas con el diseño vigente.
 
 El nombre visible del producto es **Cortex Go**; el identificador local del módulo Go es `cortex-go`. La reconstrucción contempla todos los módulos actuales excepto SocialStream Ninja, que el propietario indicó que no usa.
+
+## Reconstrucción de módulos
+
+Cada módulo nuevo se analiza primero en el proyecto anterior y luego se reconstruye dentro del servidor, almacenamiento y eventos compartidos de Go. El criterio exige conservar funciones y diseño, buscar mejoras técnicas y unificar lo posible sin cambiar el propósito del módulo. Consulta el [estándar permanente para futuras IAs](docs/18-ESTANDAR-DE-MODULOS.md) y sigue el flujo resumido en [`AGENTS.md`](AGENTS.md).
 
 ## Requisitos de desarrollo
 
@@ -30,13 +35,42 @@ El ejecutable abre el panel en el navegador predeterminado. Los datos de prueba 
 Para compilar desde PowerShell en esta carpeta:
 
 ```powershell
-New-Item -ItemType Directory -Force .\bin | Out-Null
-go build -ldflags="-H=windowsgui" -o .\bin\CortexGo-Base.exe .\cmd\cortex-go
+go build -ldflags="-H=windowsgui" -o .\cortex-go.exe .\cmd\cortex-go
 ```
 
-Después, iniciar `bin\CortexGo-Base.exe`. El ejecutable inicia un lanzador oculto que supervisa la aplicación principal y la recupera hasta cinco veces si termina con error. Si Cortex cierra normalmente, el lanzador también termina. Si se agota el límite o se cierra el propio lanzador, hay que iniciar el ejecutable otra vez. El ejecutable permite `--no-browser`, `--listen 127.0.0.1:17845` y `--data-dir <carpeta>` para pruebas controladas. El panel ofrece un control para habilitar o deshabilitar el inicio al iniciar sesión en Windows; el acceso directo queda en la carpeta Inicio del usuario y no se copia al clonar el repositorio. El panel escucha solo en loopback; Tailscale Serve puede publicarlo únicamente dentro del tailnet. Cortex no tiene login propio: limita el tailnet a tus dispositivos de confianza.
+Después, iniciar `cortex-go.exe`. El ejecutable inicia un lanzador oculto que supervisa la aplicación principal y la recupera hasta cinco veces si termina con error. Si Cortex cierra normalmente, el lanzador también termina. Si se agota el límite o se cierra el propio lanzador, hay que iniciar el ejecutable otra vez. El ejecutable permite `--no-browser`, `--listen 127.0.0.1:17845` y `--data-dir <carpeta>` para pruebas controladas. El panel ofrece un control para habilitar o deshabilitar el inicio al iniciar sesión en Windows; el acceso directo queda en la carpeta Inicio del usuario y no se copia al clonar el repositorio. El panel escucha solo en loopback; Tailscale Serve puede publicarlo únicamente dentro del tailnet. Cortex no tiene login propio: limita el tailnet a tus dispositivos de confianza.
 
-Al iniciarse, Cortex aplica las migraciones de SQLite dentro de una transacción. La versión 1 copia los eventos sintéticos existentes al registro general sin perderlos; la versión 2 agrega almacenamiento de configuración, contador persistente y archivos multimedia de módulos. Los respaldos SQLite incluyen esa configuración y los archivos cargados. `POST /api/events` recibe eventos identificados por cuenta y directo; usa el ID de origen o una huella para deduplicar. El nombre y texto del comentario se guardan localmente hasta que se borren desde el historial. Borrar el historial activo no modifica las copias de seguridad anteriores.
+Para desplegar el código de esta carpeta, abre [`Desplegar Cortex Go.bat`](Desplegar%20Cortex%20Go.bat). Compila en una ruta temporal, crea y valida un respaldo desde el Cortex activo, lo cierra ordenadamente, reemplaza el único `cortex-go.exe`, lo inicia y verifica el estado y las rutas del overlay. Conserva el binario anterior hasta aceptar el arranque y lo restaura si falla la verificación. Requiere Go en `PATH` y que Cortex esté activo para respaldar SQLite.
+
+Al iniciarse, Cortex aplica las migraciones de SQLite dentro de una transacción. Las versiones 1–4 preparan eventos, almacenamiento de módulos, copias de chats e índices del historial; las versiones 5–9 agregan el despacho recuperable de Rulo, identidad opcional del participante, aclaraciones, respuestas versionadas y sesiones de programa; las versiones 10–14 agregan operaciones Spotify durables y FIFO, casos de evaluación, ejemplos persistentes de reglas y una cuota móvil para llamadas IA manuales del laboratorio; la v15 incorpora el caso sintético de estadísticas, la v16 el registro de uso live y la v17 el presupuesto de tokens y el registro de evaluaciones live aisladas; la v18 añade un ledger de presupuesto independiente del borrado del comentario. La cuota IA manual del Laboratorio conserva solo tipo y hora, nunca prompts ni respuestas; el ledger live añade estado y unidades de tokens, sin guardar texto. Los respaldos SQLite incluyen esos datos. `POST /api/events` recibe eventos identificados por cuenta y directo; usa el ID de origen o una huella para deduplicar. El nombre y texto del comentario se guardan localmente hasta que se borren desde el historial. Borrar el historial activo no modifica los chats guardados ni las copias de seguridad anteriores.
+
+## Historial de Facebook
+
+El historial completo está en `http://127.0.0.1:17845/rulo-chat-historial.html` (también `/modules/facebook/history`). Consulta los comentarios guardados en SQLite, permite buscar texto y autor, filtrar por cuenta, fecha e ID de transmisión, navegar páginas, guardar/abrir/borrar chats por número de programa, borrar registros y exportar CSV compatible con Excel. Si llegan comentarios mientras se revisa una página anterior, muestra un aviso con el total y conserva la lectura hasta que se pulse. La portada de Cortex tiene accesos al historial y al overlay de OBS.
+
+El overlay combinado es `http://127.0.0.1:17845/rulo-chat-overlay.html` (también `/modules/facebook/overlay`); es el único acceso **Overlay OBS** del panel y del historial. Muestra comentarios nuevos con tarjetas azul noche, nombre en una placa azul, cuenta y autor; al destacar un comentario lo presenta centrado con el diseño art-forest y su canguro vectorial local en `/modules/facebook/assets/kangaroo.svg`. Al destacarlo se quita de la lista normal para que no aparezca dos veces. Si el texto desborda, espera y baja lentamente hasta el final. Desde el historial se puede tocar una fila o su botón **Destacar**; funciona con comentarios actuales y chats guardados y da confirmación en pantalla. La fuente independiente `/rulo-featured.html` (también `/modules/facebook/featured`) sigue disponible para una escena de OBS que quiera mostrar solo destacados. Los mensajes normales conservan su tiempo `showtime`; el destacado permanece hasta completar el recorrido y hace una pausa final breve. En **Más opciones** del panel principal se cambian cantidad, duración, pausa, velocidad, ancho, altura del texto del chat y del destacado, cuenta y otros filtros; se guarda la preferencia en ese navegador y se copia la URL de OBS. **Vista previa larga** abre únicamente la tarjeta destacada con un ejemplo breve. Para la vista previa directa, abre `/rulo-chat-overlay.html?preview=1&sample=long` o `/rulo-featured.html?preview=1&sample=long`. El chat también admite `limit`, `showtime`, `reverse`, `fadezone`, `width`, `chatHeight`, `featuredHeight`, `scale`, `feedId`, `streamId` y `time=1`; `?debug=1` muestra el estado de conexión. Ambos overlays usan SSE y el comentario destacado se resuelve desde la SQLite compartida. Consulta [la guía del módulo](docs/19-MODULO-HISTORIAL-FACEBOOK.md) para controles y límites.
+
+## Ecosistema Rulo — en implementación
+
+Las recomendaciones de la [revisión previa](docs/21-REVISION-PREIMPLEMENTACION-RULO.md) están incorporadas por solicitud del propietario en la [guía vigente de Rulo](docs/20-GUIA-ECOSISTEMA-RULO.md). El primer corte se describe en [Módulo Rulo: base y laboratorio](docs/22-MODULO-RULO-BASE-LABORATORIO.md); se desplegó en la instancia activa el 14 de noviembre con SQLite v18. El Rulo Unified Overlay y sus rutas de configuración quedaron desplegados el 15 de noviembre. Live sigue apagado y pendiente de la configuración monetaria del proveedor. El propietario confirmó avisos breves de resultados tardíos en overlay, recuperación de pedidos recientes del mismo programa y la inclusión de Cuaderno Vivo y estadísticas del historial en el lanzamiento completo.
+
+La auditoría del sistema anterior también registró qué conviene conservar de Rulator, del entrenamiento musical, de la revisión de reglas y de la presentación web/3D. DeepSeek queda documentado como proveedor usado/configurado en el legado, no como dependencia obligatoria: Cortex Go debe separar interpretación, redacción y sugerencias detrás de una interfaz de IA validable y sustituible. La guía incluye ahora el inventario de capacidades y el orden de autoridad entre invariantes, módulos dueños, reglas guardadas, personalidad e IA.
+
+La base local de Rulo incluye despacho durable, sesiones de programa, laboratorio privado, respuestas versionadas, perfil de personalidad, propuesta de regla desde una sesión manual, casos opcionales de paráfrasis/ambigüedad/negativos, prueba sin guardar, comparación orientativa antes/después en tres casos y reglas generales con propietario y conflictos exactos validados, ejemplo de respuesta persistente por regla, casos sintéticos de evaluación local y presentación en historial/overlay. La evaluación incluye una consulta sobre conteos del historial, reconocida solo como intención de laboratorio: no consulta datos ni habilita respuestas públicas. Si una propuesta toca esa habilidad, el laboratorio la deriva al dueño del historial y no permite guardarla como regla general de Rulo. DeepSeek es opcional para el Laboratorio y recibe ejemplos solo al ejecutar una acción manual. En vivo solo procesa candidatos cuando el operador activa la preferencia explícita y pasan los límites de configuración; se envían comentario, perfil y reglas, sin IDs del autor como campos separados. El comentario puede incluir referencias personales. El laboratorio limita las llamadas a 30 intentos por cada ventana móvil de 24 horas y muestra el uso; cuenta fallos del proveedor y conserva únicamente el tipo y la hora de cada intento. El perfil y hasta diez reglas activas acompañan simulaciones, pruebas y comparaciones manuales; una propuesta muestra categoría, propietario, alcance, instrucción y ejemplo para revisión antes de guardar. El chat real se queda local salvo que el operador active expresamente la conversación en vivo; entonces solo se envían al proveedor los comentarios seleccionados, el perfil y las reglas generales. Sin proveedor, el clasificador local avisa que no puede interpretar las instrucciones libres. El evaluador compara la base determinista sin IA ni efectos y muestra sus diferencias; todavía no mide el motor conversacional completo. El consumidor en vivo actual es limitado: atiende pedidos Spotify explícitos con título/artista, consultas claras de reproducción y da avisos seguros de lotería sin escribir en Cdelu. La conversación general por IA está integrada localmente, apagada por defecto y detrás de una aprobación explícita de datos y presupuesto; las reglas generales se usan solo cuando el operador activa esa preferencia. La IA no valida ni ejecuta habilidades externas. Spotify tiene PKCE, token de renovación cifrado por DPAPI, consulta de reproducción y operaciones FIFO durables con recuperación por sesión; una comprobación local del 15 de noviembre confirmó autorización y lecturas API, pero no encontró reproducción activa. Rulo estaba pausado durante la revisión, así que la cola no estaba lista en runtime y no se probó una escritura. La cola queda apagada por defecto en una instalación nueva. La presentación animada todavía no está conectada al contrato semántico. Hay un prototipo independiente Rulo Studio 3D con controles y pruebas de navegador documentados; no está integrado ni validado dentro de una escena OBS. Para la importación futura de clips, la guía técnica v2 propone archivos WebM independientes por animación, normalización con FFmpeg fuera del vivo, metadatos de poses y reproducción con precarga/doble buffer. La consulta administrativa agregada de estadísticas del historial ya está disponible; falta integrarla como habilidad pública, y Cuaderno Vivo sigue pendiente del primer lanzamiento completo. El proyecto anterior permanece intacto.
+
+La conversación en vivo requiere `CORTEX_RULO_AI_API_KEY`, `CORTEX_RULO_LIVE_AI_DAILY_LIMIT` entre 1 y 100, `CORTEX_RULO_LIVE_AI_DAILY_TOKEN_LIMIT` entre 25000 y 2000000 unidades estimadas, `CORTEX_RULO_LIVE_AI_BUDGET_APPROVED=true` y `CORTEX_RULO_LIVE_AI_ACCOUNT_BUDGET_CONFIRMED=true`; el panel ofrece el interruptor, apagado inicialmente. `CORTEX_RULO_LIVE_AI_SPONTANEOUS_EVERY` admite 1–100 IDs de evento (por defecto 20) y `CORTEX_RULO_LIVE_AI_COOLDOWN_SECONDS` 10–3600 segundos (por defecto 30). Los topes de llamadas/tokens no son monetarios; además se requiere configurar y verificar un límite de gasto efectivo en la cuenta del proveedor. La variable de confirmación es una declaración del operador; Cortex no verifica la cuenta; el código limita cada entrada a 1000 caracteres, 300 tokens de salida y 8 segundos.
+
+La instancia activa y el código usan SQLite v18 desde el 14 de noviembre de 2026; la actualización local se respaldó y verificó. El prototipo Facebook entrega `participantId` cuando el perfil expone un ID numérico; el servidor valida formato y lo conserva privado con el evento. Falta validarlo con captura real y enlazarlo con Cdelu; no se habilitan reservas. El SSE de Facebook sigue alimentando el overlay, no es un bus de módulos. Las respuestas de Rulo van solo al overlay y al historial; no se publican comentarios en Facebook. Las restauraciones saltan el despacho histórico, deshabilitan la cola Spotify y la conversación IA live, y evitan reenviar pedidos antiguos; la conversación requiere nueva activación. La [guía 20](docs/20-GUIA-ECOSISTEMA-RULO.md) reúne contratos, alcance y requisitos pendientes.
+
+Spotify tiene un panel en `/modules/spotify`; revisa [docs/23-MODULO-SPOTIFY.md](docs/23-MODULO-SPOTIFY.md). La cola solo puede habilitarse después de configurar una aplicación nueva con PKCE, autorizar la cuenta, activar la preferencia, iniciar un programa y reanudar Rulo. La sesión se administra desde el panel central y el servidor enlaza sus eventos. En la instancia consultada el 15 de noviembre, la autorización y la búsqueda de catálogo respondían; no había reproducción activa y Rulo estaba pausado, por lo que la cola no estaba lista. El código actualizado quedó desplegado; la cola sigue pendiente de una reproducción/dispositivo Spotify activo. Una guía técnica encontrada amplía el alcance posible con biblioteca local, reproducción automática y análisis musical; esas funciones se deben confirmar con el reproductor heredado antes de implementarlas. La integración actual sigue limitada a Spotify online.
+
+El módulo Spotify incluye el vocabulario editable de pedidos y el parser compartido con el Laboratorio: por ejemplo, «Quiero un tema de Amar Azul» se clasifica como pedido de artista y muestra una cola simulada en el laboratorio. En un comentario live, la pista debe coincidir con Amar Azul y entrar por la cola durable existente. El entrenamiento se guarda dentro de `module_settings`; no se importaron palabras ni datos privados del proyecto anterior. Esta versión ya está desplegada.
+
+### Rulo Unified Overlay
+
+La configuración y vista previa están en `http://127.0.0.1:17845/modules/rulo/presentation` y remotamente en `https://notebook-mati.tail983e46.ts.net:8443/modules/rulo/presentation`. La fuente transparente de navegador para OBS es `http://127.0.0.1:17845/rulo-unified-overlay.html` (también `/modules/rulo/overlay`) y remotamente `https://notebook-mati.tail983e46.ts.net:8443/rulo-unified-overlay.html`. El diseño reúne la canción actual de Spotify, portada, progreso, letra opcional y comentarios nuevos. Sus controles se guardan en `rulo_settings` dentro de la SQLite existente. La fuente se conecta al SSE compartido del historial: al abrir muestra comentarios nuevos y, si pierde conexión, recupera los que llegaron durante el corte.
+
+La prueba de comentario del panel se envía solo al iframe de vista previa; no se inserta en el historial ni llega a OBS. Las letras se consultan bajo demanda en [LRCLIB](https://lrclib.net/docs) al cambiar de pista; se envían título, artista, álbum y duración, y el texto no se guarda ni se persiste. El tamaño recomendado de la fuente OBS es 900 × 650. El overlay y la configuración responden en local y por HTTPS; falta verificar su composición en una escena real de OBS.
 
 ## Bienvenidos y Banner
 
@@ -52,13 +86,19 @@ Se conservaron los seis presets, el modo aleatorio, la paleta y colores personal
 
 La conexión OBS usa `ws://127.0.0.1:4455` o una dirección `CORTEX_OBS_WS` que resuelva a loopback. Si OBS exige clave, Cortex la lee de `CORTEX_OBS_PASSWORD`; no la guarda en SQLite ni la muestra. La prueba de conexión es de lectura. El cambio manual de escena y la transición al llegar a cero requieren una escena configurada; la transición automática empieza desactivada. El acceso al panel remoto debe mantenerse restringido al tailnet de confianza.
 
+## Clima y Tiempo
+
+El panel está en `http://127.0.0.1:17845/modules/clima/admin`; la fuente de navegador para OBS es `http://127.0.0.1:17845/modules/clima/overlay`. Conserva relojes por zona horaria, temperaturas actuales, orden y rotación de ubicaciones, pausa y selección manual, además de tarjeta/cinta, posiciones, temas y transiciones del overlay anterior. Se pueden habilitar por separado el reloj y el clima de cada ciudad.
+
+El servidor consulta [Open-Meteo Forecast API](https://open-meteo.com/en/docs) y su [Geocoding API](https://open-meteo.com/en/docs/geocoding-api), con caché de diez minutos, concurrencia limitada y lectura anterior retenida cuando falla la conexión. Las vistas se sincronizan desde un planificador Go central y eventos SSE. Los ajustes y las últimas condiciones se incluyen en la SQLite y en sus respaldos; no se requiere Node, Socket.IO, clave meteorológica ni recursos CDN. La validación final de escala y legibilidad en una escena OBS queda pendiente hasta tener OBS disponible. Ver [la guía del módulo](docs/17-MODULO-CLIMA-Y-TIEMPO.md).
+
 Para este despliegue, la instancia disponible queda como host activo mientras la otra PC está apagada. La notebook accede al mismo panel por Tailscale; no mantengas dos instancias escribiendo la misma base ni sincronices el SQLite activo entre equipos. Cuando vuelva a estar disponible la PC habitual, se puede planificar el traslado con un respaldo verificado.
 
 El panel central también se puede instalar como aplicación PWA desde un navegador compatible cuando se abre por HTTPS, por ejemplo mediante Tailscale Serve. El service worker guarda únicamente la carcasa estática del panel central; las interfaces de Bienvenidos y Banner y Luces y sus API requieren conexión con Cortex. En Chrome o Edge usa el botón **Instalar app** cuando aparezca o el control de instalación del navegador; en Safari de iOS, usa **Compartir → Añadir a pantalla de inicio**.
 
 En el panel, **Respaldo local de SQLite** permite crear, restaurar y revisar los respaldos locales generados por Cortex Go; también permite borrar uno o todos con confirmación. Antes de restaurar, conserva automáticamente una copia de la base actual. Los respaldos no están cifrados ni se sincronizan. Borrar un comentario elimina la fila activa; si ya existe en respaldos, elimina también esos archivos desde la lista. Copias exportadas a otro lugar requieren su propio borrado.
 
-La sección **Publicar código en GitHub** revisa los cambios de `main`, muestra el diff y solicita confirmación antes de crear un commit y hacer Push al remoto público `mati4315/Cortex-GO`. Solo permite revisar archivos Go, recursos concretos del panel PWA, fuentes del prototipo Facebook y Markdown de `docs/`; bloquea archivos preparados previamente, commits locales pendientes, ramas atrasadas y rutas fuera de esa lista. El botón no publica nada hasta que se confirme en el panel.
+La sección **Publicar código en GitHub** revisa los cambios de `main`, muestra el diff y solicita confirmación antes de crear un commit y hacer Push al remoto público `mati4315/Cortex-GO`. Solo presenta archivos que pasan la lista permitida y el límite de vista previa; los demás se omiten automáticamente y quedan fuera del commit. El mensaje indica cuántos se omitieron. Archivos preparados previamente, commits locales pendientes y ramas atrasadas siguen bloqueando el envío. El botón no publica nada hasta que se revisa la lista visible y se confirma en el panel.
 
 ## Qué verifica y qué no
 
@@ -66,28 +106,22 @@ La sección **Publicar código en GitHub** revisa los cambios de `main`, muestra
 - Si el ejecutable supervisor desaparece de forma abrupta, el servidor hijo se cierra al perder tres latidos, espaciados por tres segundos. No se instaló un servicio de Windows que vuelva a lanzar el propio ejecutable supervisor.
 - Cuenta 1 y Cuenta 2 muestran el estado de los perfiles de captura. El API mantiene un endpoint sintético para desarrollo; solo el prototipo separado envía comentarios de Facebook después de la autenticación manual. No se importan cuentas, credenciales ni datos del Cortex anterior.
 - OBS usa el WebSocket local (por defecto `ws://127.0.0.1:4455`) para completar la identificación de sesión. Solo acepta direcciones de loopback. El panel central no envía órdenes; el módulo Bienvenidos y Banner puede cambiar una escena únicamente cuando la acción manual se solicita o la transición automática se habilita de forma explícita. Si OBS requiere clave, se lee desde `CORTEX_OBS_PASSWORD` y no se guarda ni se muestra.
-- “Destacar” solo cambia el aspecto de la fila en este panel de prueba; todavía no activa una escena ni una fuente de OBS.
+- **Destacar** envía el comentario elegido a las fuentes de overlay conectadas; no cambia la escena de OBS.
 
 ## Desarrollo
 
 Se requiere Go 1.27.0 o posterior. Las dependencias directas son `modernc.org/sqlite` (SQLite sin CGO) y `github.com/gorilla/websocket`.
 
-Para comprobar ambos módulos:
-
-```powershell
-go test ./...
-Push-Location .\experiments\facebook-browser-poc
-go test ./...
-Pop-Location
-```
-
 Para verificar el código y compilar desde PowerShell:
 
 ```powershell
-go test ./...
-go build -ldflags="-H=windowsgui" -o .\bin\CortexGo-Base.exe .\cmd\cortex-go
+go build -ldflags="-H=windowsgui" -o .\cortex-go.exe .\cmd\cortex-go
 ```
+
+### Prueba de captura de Facebook
+
+Con Cortex Go abierto, ejecuta `experiments\facebook-browser-poc\FacebookBrowserPoC.exe -account 2` para probar una sola cuenta; usa `-account 1` para seleccionar el primer perfil. Sin `-account`, abre ambos perfiles locales. Inicia sesión manualmente y abre Live Producer > Comentarios del directo en la misma pestaña monitoreada. No reutiliza las cookies del perfil Brave habitual ni envía sesiones a la notebook. El cierre con `Ctrl+C` cierra ordenadamente las ventanas abiertas.
 
 ## Documentación
 
-Empieza por [`docs/00-INDICE.md`](docs/00-INDICE.md), consulta el [estado de la base operativa](docs/14-BASE-OPERATIVA.md), las guías de [Bienvenidos y Banner](docs/15-MODULO-BIENVENIDOS-Y-BANNER.md) y [Luces](docs/16-MODULO-LUCES.md), la [guía Facebook](docs/13-GUIA-CAPTURA-COMENTARIOS-FACEBOOK.md) y el [plan para PC y notebook](docs/12-SINCRONIZACION-ENTRE-PC.md). El primer corte técnico queda como antecedente en `docs/11-PRIMER-CORTE-PRUEBA-TECNICA.md`.
+Empieza por [`docs/00-INDICE.md`](docs/00-INDICE.md), consulta el [estado de la base operativa](docs/14-BASE-OPERATIVA.md), las guías de [Bienvenidos y Banner](docs/15-MODULO-BIENVENIDOS-Y-BANNER.md), [Luces](docs/16-MODULO-LUCES.md) y [Historial de Facebook](docs/19-MODULO-HISTORIAL-FACEBOOK.md), la [guía de captura Facebook](docs/13-GUIA-CAPTURA-COMENTARIOS-FACEBOOK.md) y el [plan para PC y notebook](docs/12-SINCRONIZACION-ENTRE-PC.md). El primer corte técnico queda como antecedente en `docs/11-PRIMER-CORTE-PRUEBA-TECNICA.md`.

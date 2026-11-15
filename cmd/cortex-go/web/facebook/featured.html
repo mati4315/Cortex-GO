@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#000000">
+  <title>Comentario destacado · Cortex Go</title>
+  <link rel="stylesheet" href="/modules/facebook/css/featured.css">
+</head>
+<body>
+  <main class="stage" aria-label="Comentario destacado de Facebook">
+    <article id="feature" class="feature" hidden aria-live="polite">
+      <div class="feature-card">
+        <div class="kicker"><span class="leaf" aria-hidden="true">✦</span> Comentario destacado</div>
+        <div class="heading"><strong id="author"></strong><span id="account" class="account"></span></div>
+        <p id="message" class="message"></p>
+        <time id="time" class="time"></time>
+      </div>
+    </article>
+  </main>
+  <div id="status" class="status" role="status" aria-live="polite" hidden>Conectando…</div>
+  <script src="/modules/facebook/js/featured.js" defer></script>
+</body>
+</html>

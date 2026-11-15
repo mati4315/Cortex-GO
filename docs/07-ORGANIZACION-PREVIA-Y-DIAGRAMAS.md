@@ -201,7 +201,7 @@ sequenceDiagram
 - **Contratos de integración breves:** definir qué recibe/emite OBS, la extensión, Spotify y cada servicio externo; no añadir bus distribuido.
 - **ADRs de una página:** registrar pocas decisiones que cambian estructura: lenguaje, proceso único, base y datos, acceso LAN, OBS, tratamiento de SSN, distribución.
 - **Capacidades verticales:** implementar y revisar un flujo de punta a punta antes de abrir el siguiente; cada entrega tiene entrada, salida, estado de error y criterio de aceptación.
-- **Cortes por dependencia:** primero configuración/estado; luego conexión OBS y páginas; después datos; después flujos de chat y Spotify; luego Rulo/ruleta y herramientas restantes. Ajustar este orden con el uso real.
+- **Cortes por dependencia:** para Rulo rige el orden de cinco etapas de la [guía vigente](20-GUIA-ECOSISTEMA-RULO.md#orden-recomendado-para-implementar-cuando-el-propietario-lo-autorice). Los diagramas de este documento son referencias previas y no sustituyen sus contratos de operaciones, respuestas y recuperación.
 - **Definición de “listo”:** comportamiento, errores, prueba aislada, logs sin secretos, backup/restore si hay persistencia y revisión visual en la escena correcta.
 - **Revisión de IA 2 por fase:** que cuestione límites y trazabilidad y no solo el código. El propietario decide cuándo pasa la fase y cuándo se reemplaza el sistema.
 - **Medir con escenario fijo:** registrar estado inicial de la PC y OBS; repetir el mismo flujo con cada versión. Medición antes de hablar de ahorro.

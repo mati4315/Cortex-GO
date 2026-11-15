@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"modernc.org/sqlite"
 )
@@ -128,10 +130,79 @@ func (s *eventStore) Restore(ctx context.Context, source string) error {
 	if err := migrateEventSchema(s.db); err != nil {
 		return s.rollbackRestore(rollbackPath, fmt.Errorf("actualizar el esquema del respaldo: %w", err))
 	}
+	if err := s.prepareRestoredRuntime(ctx); err != nil {
+		return s.rollbackRestore(rollbackPath, fmt.Errorf("preparar el runtime restaurado: %w", err))
+	}
 	if err := validateSQLiteDatabase(ctx, s.db); err != nil {
 		return s.rollbackRestore(rollbackPath, fmt.Errorf("validar base restaurada: %w", err))
 	}
 	return nil
+}
+
+func (s *eventStore) prepareRestoredRuntime(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	settings := map[string]json.RawMessage{}
+	var raw string
+	err = tx.QueryRowContext(ctx, `SELECT settings_json FROM module_settings WHERE module_id=?`, spotifyModuleID).Scan(&raw)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err == nil {
+		if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+			return fmt.Errorf("la configuración Spotify del respaldo no es válida: %w", err)
+		}
+	}
+	if settings == nil {
+		settings = map[string]json.RawMessage{}
+	}
+	settings["liveQueueEnabled"] = json.RawMessage("false")
+	var recentMinutes int
+	if err := json.Unmarshal(settings["recentOrderMinutes"], &recentMinutes); err != nil || recentMinutes < 1 || recentMinutes > 30 {
+		settings["recentOrderMinutes"] = json.RawMessage("10")
+	}
+	var clientID string
+	if err := json.Unmarshal(settings["clientId"], &clientID); err != nil || (clientID != "" && !validSpotifyClientID(clientID)) {
+		settings["clientId"] = json.RawMessage(`""`)
+	}
+	encoded, err := json.Marshal(settings)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO module_settings(module_id,settings_json,updated_at) VALUES(?,?,?)
+		ON CONFLICT(module_id) DO UPDATE SET settings_json=excluded.settings_json,updated_at=excluded.updated_at`,
+		spotifyModuleID, string(encoded), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+
+	var latest int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence),0) FROM event_dispatch`).Scan(&latest); err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO dispatch_cursors(consumer_id,sequence,updated_at) VALUES(?,?,?)
+		ON CONFLICT(consumer_id) DO UPDATE SET sequence=MAX(sequence,excluded.sequence),updated_at=excluded.updated_at`,
+		ruloConsumerID, latest, now); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE spotify_operations SET status='incierto',detail='Se restauró una copia después del envío; el resultado no se reintenta automáticamente.',updated_at=? WHERE status='pendiente' AND sent_at<>''`, now); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE spotify_operations SET status='cancelado',detail='La restauración omitió operaciones aún no enviadas para evitar reproducir pedidos históricos.',updated_at=? WHERE status='pendiente' AND sent_at=''`, now); err != nil {
+		return err
+	}
+	var minimum int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MIN(sequence),0) FROM dispatch_cursors`).Scan(&minimum); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM event_dispatch WHERE sequence<=?`, minimum); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *eventStore) applySQLiteSnapshot(ctx context.Context, sourcePath string) error {
