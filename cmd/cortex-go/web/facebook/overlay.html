@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#000000">
+  <title>Overlay de comentarios de Facebook · Cortex Go</title>
+  <link rel="stylesheet" href="/modules/facebook/css/overlay.css">
+</head>
+<body>
+  <main id="chat-container" aria-label="Comentarios de Facebook en vivo">
+    <section id="messages" class="messages" aria-live="off" aria-relevant="additions">
+      <article id="preview-message" class="message preview-message" hidden>
+        <div class="message-head"><span class="name">María Ejemplo</span><span class="account account-a">Cuenta 1</span></div>
+        <p class="text">¡Qué buen programa! 👏</p>
+      </article>
+    </section>
+  </main>
+  <aside id="featured-spotlight" class="featured-spotlight" hidden aria-live="polite">
+    <div class="featured-card">
+      <div class="featured-kicker"><span class="featured-leaf" aria-hidden="true">✦</span> Comentario destacado</div>
+      <div class="featured-heading"><strong id="featured-author"></strong><span id="featured-account" class="featured-account"></span></div>
+      <p id="featured-text" class="featured-text"></p>
+      <time id="featured-time" class="featured-time"></time>
+    </div>
+  </aside>
+  <aside id="rulo-update-notice" class="rulo-update-notice" hidden role="status" aria-live="polite">
+    <strong>Rulo actualizó un resultado</strong>
+    <span id="rulo-update-text"></span>
+  </aside>
+  <div id="connection-status" class="connection-status" role="status" aria-live="polite" hidden>Conectando…</div>
+  <script src="/modules/facebook/js/overlay.js" defer></script>
+</body>
+</html>
