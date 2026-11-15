@@ -66,6 +66,18 @@ type gitPublishResult struct {
 	FileCount  int    `json:"fileCount,omitempty"`
 }
 
+type gitUpdateResult struct {
+	State        string `json:"state"`
+	Repository   string `json:"repository"`
+	Branch       string `json:"branch"`
+	Ahead        int    `json:"ahead"`
+	Behind       int    `json:"behind"`
+	LocalChanges int    `json:"localChanges"`
+	UpdatedFiles int    `json:"updatedFiles,omitempty"`
+	Commit       string `json:"commit,omitempty"`
+	Message      string `json:"message"`
+}
+
 type gitStatusEntry struct {
 	Path   string
 	Status string
@@ -224,6 +236,93 @@ func (g *gitSyncManager) Publish(ctx context.Context, request gitPublishRequest)
 		FileCount:  len(actualFiles),
 		Message:    "Los archivos revisados se publicaron en el repositorio público.",
 	}, nil
+}
+
+func (g *gitSyncManager) CheckAndUpdate(ctx context.Context) (gitUpdateResult, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	snapshot, err := g.loadSnapshot(ctx)
+	if err != nil {
+		return gitUpdateResult{}, err
+	}
+	branch := snapshot.Preview.Branch
+	upstream := snapshot.Preview.Upstream
+	result := gitUpdateResult{Repository: publicGitHubRepository, Branch: branch}
+	if _, err := g.run(ctx, "fetch", "origin"); err != nil {
+		return result, fmt.Errorf("no se pudieron consultar las actualizaciones de GitHub: %w", err)
+	}
+
+	statusOutput, err := g.run(ctx, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil {
+		return result, fmt.Errorf("no se pudieron revisar los cambios locales antes de actualizar: %w", err)
+	}
+	entries, hasStaged, err := parseGitStatus(statusOutput)
+	if err != nil {
+		return result, err
+	}
+	for _, entry := range entries {
+		if entry.Status == "??" && isSupplementalSyncPath(entry.Path) {
+			continue
+		}
+		result.LocalChanges++
+	}
+
+	aheadText, err := g.run(ctx, "rev-list", "--count", upstream+"..HEAD")
+	if err != nil {
+		return result, fmt.Errorf("no se pudo comparar la rama local con GitHub: %w", err)
+	}
+	behindText, err := g.run(ctx, "rev-list", "--count", "HEAD.."+upstream)
+	if err != nil {
+		return result, fmt.Errorf("no se pudo comparar la rama local con GitHub: %w", err)
+	}
+	result.Ahead = parseGitCount(aheadText)
+	result.Behind = parseGitCount(behindText)
+
+	if result.Ahead > 0 {
+		result.State = "local_ahead"
+		result.Message = fmt.Sprintf("Hay %d commit(s) local(es) sin subir. No se actualizó esta carpeta.", result.Ahead)
+		return result, nil
+	}
+	if result.LocalChanges > 0 || hasStaged {
+		result.State = "local_changes"
+		if result.Behind > 0 {
+			result.Message = fmt.Sprintf("GitHub tiene %d commit(s) nuevo(s), pero hay %d cambio(s) local(es). No se actualizó nada para protegerlos.", result.Behind, result.LocalChanges)
+		} else {
+			result.Message = fmt.Sprintf("GitHub está al día; hay %d cambio(s) local(es) que se conservaron.", result.LocalChanges)
+		}
+		return result, nil
+	}
+	if result.Behind == 0 {
+		result.State = "up_to_date"
+		result.Message = "Esta carpeta ya tiene la versión más reciente de GitHub."
+		return result, nil
+	}
+
+	oldHead := snapshot.Head
+	if _, err := g.run(ctx, "merge", "--ff-only", upstream); err != nil {
+		return result, fmt.Errorf("GitHub tiene cambios, pero no se pudieron aplicar como avance directo: %w", err)
+	}
+	newHeadText, err := g.run(ctx, "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return result, fmt.Errorf("la actualización se aplicó, pero no se pudo verificar el commit local: %w", err)
+	}
+	newHead := strings.TrimSpace(newHeadText)
+	upstreamHead, err := g.run(ctx, "rev-parse", "--verify", upstream)
+	if err != nil || newHead != strings.TrimSpace(upstreamHead) {
+		return result, errors.New("la rama local no quedó alineada con GitHub después de actualizar")
+	}
+	updatedOutput, err := g.run(ctx, "diff", "--name-only", "-z", oldHead+".."+newHead)
+	if err != nil {
+		return result, fmt.Errorf("la actualización se aplicó, pero no se pudo contar sus archivos: %w", err)
+	}
+	result.State = "updated"
+	result.UpdatedFiles = len(splitGitPaths(updatedOutput))
+	result.Commit = newHead[:min(12, len(newHead))]
+	result.Ahead = 0
+	result.Behind = 0
+	result.Message = fmt.Sprintf("Cortex Go se actualizó al commit %s; Git incorporó %d archivo(s).", result.Commit, result.UpdatedFiles)
+	return result, nil
 }
 
 func (g *gitSyncManager) loadSnapshot(ctx context.Context) (gitStatusSnapshot, error) {
@@ -462,7 +561,7 @@ func parseGitStatus(output string) ([]gitStatusEntry, bool, error) {
 		status := item[:2]
 		path := item[3:]
 		if strings.ContainsAny(status, "RCU") {
-			return nil, false, errors.New("hay archivos renombrados o conflictos; resolvelos con Git antes de publicar")
+			return nil, false, errors.New("hay archivos renombrados o conflictos; resolvelos con Git antes de sincronizar o publicar desde el panel")
 		}
 		if status[0] != ' ' && status[0] != '?' {
 			hasStaged = true

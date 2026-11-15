@@ -18,18 +18,21 @@ import (
 var webFiles embed.FS
 
 type controlServer struct {
-	manager  *processSupervisor
-	shutdown func()
-	client   *http.Client
-	gitSync  *gitSyncManager
+	manager   *processSupervisor
+	shutdown  func()
+	client    *http.Client
+	gitSync   *gitSyncManager
+	extraSync *supplementalSyncManager
 }
 
 func newControlServer(manager *processSupervisor, shutdown func()) http.Handler {
+	projectRoot := discoverProjectRoot()
 	control := &controlServer{
-		manager:  manager,
-		shutdown: shutdown,
-		client:   &http.Client{Timeout: 2500 * time.Millisecond},
-		gitSync:  newGitSyncManager(discoverProjectRoot(), findGitExecutable()),
+		manager:   manager,
+		shutdown:  shutdown,
+		client:    &http.Client{Timeout: 2500 * time.Millisecond},
+		gitSync:   newGitSyncManager(projectRoot, findGitExecutable()),
+		extraSync: newSupplementalSyncManager(projectRoot),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", control.handleHealth)
@@ -72,7 +75,9 @@ func newControlServer(manager *processSupervisor, shutdown func()) http.Handler 
 	mux.HandleFunc("POST /api/worker/restart", control.handleRestart)
 	mux.HandleFunc("POST /api/shutdown", control.handleShutdown)
 	mux.HandleFunc("GET /api/git/preview", control.handleGitPreview)
+	mux.HandleFunc("POST /api/git/update", control.handleGitUpdate)
 	mux.HandleFunc("POST /api/git/publish", control.handleGitPublish)
+	mux.HandleFunc("POST /api/sync/supplemental", control.handleSupplementalSync)
 	mux.HandleFunc("GET /api/modules/welcome/", control.proxy)
 	mux.HandleFunc("PUT /api/modules/welcome/", control.proxy)
 	mux.HandleFunc("POST /api/modules/welcome/", control.proxy)
@@ -546,6 +551,38 @@ func (c *controlServer) handleGitPreview(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, preview)
+}
+
+func (c *controlServer) handleGitUpdate(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	result, err := c.gitSync.CheckAndUpdate(ctx)
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, context.DeadlineExceeded) {
+			status = http.StatusGatewayTimeout
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (c *controlServer) handleSupplementalSync(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	defer cancel()
+	result, err := c.extraSync.Sync(ctx)
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, context.DeadlineExceeded) {
+			status = http.StatusGatewayTimeout
+		} else if strings.Contains(err.Error(), "configurá el destino WebDAV") {
+			status = http.StatusServiceUnavailable
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (c *controlServer) handleGitPublish(w http.ResponseWriter, r *http.Request) {
