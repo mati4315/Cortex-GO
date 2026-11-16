@@ -30,6 +30,7 @@ type feedStatus struct {
 	CaptureAgentConnected bool   `json:"captureAgentConnected"`
 	CommentsPage          bool   `json:"commentsPage"`
 	VisibleRows           int    `json:"visibleRows"`
+	RecognizedComments    int    `json:"recognizedComments"`
 	NewComments           int    `json:"newComments"`
 	LastScanAt            string `json:"lastScanAt,omitempty"`
 	LastDetectedAt        string `json:"lastDetectedAt,omitempty"`
@@ -364,6 +365,15 @@ func (s *workerService) handleStatus(w http.ResponseWriter, r *http.Request) {
 	lastSaved := s.lastSaved
 	s.mu.RUnlock()
 	for i := range feeds {
+		if feeds[i].CaptureAgentConnected {
+			lastScan, parseErr := time.Parse(time.RFC3339Nano, feeds[i].LastScanAt)
+			if parseErr != nil || time.Since(lastScan) > 15*time.Second {
+				feeds[i].CaptureAgentConnected = false
+				feeds[i].CommentsPage = false
+				feeds[i].State = "capturador_sin_respuesta"
+				feeds[i].LastError = "No se recibe señal del capturador; vuelve a iniciarlo."
+			}
+		}
 		count, countErr := s.store.Count(ctx, feeds[i].ID)
 		if countErr != nil {
 			http.Error(w, "No se pudo consultar la base de eventos", http.StatusServiceUnavailable)
@@ -1093,12 +1103,14 @@ func (s *workerService) handleCaptureStatus(w http.ResponseWriter, r *http.Reque
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	var input struct {
-		CommentsPage bool  `json:"commentsPage"`
-		VisibleRows  int   `json:"visibleRows"`
-		NewComments  int   `json:"newComments"`
-		LastDetected int64 `json:"lastDetected"`
+		CommentsPage       bool   `json:"commentsPage"`
+		VisibleRows        int    `json:"visibleRows"`
+		RecognizedComments int    `json:"recognizedComments"`
+		NewComments        int    `json:"newComments"`
+		LastDetected       int64  `json:"lastDetected"`
+		LastError          string `json:"lastError"`
 	}
-	if err := decoder.Decode(&input); err != nil || input.VisibleRows < 0 || input.VisibleRows > 500 || input.NewComments < 0 || input.NewComments > 1_000_000 || input.LastDetected < 0 {
+	if err := decoder.Decode(&input); err != nil || input.VisibleRows < 0 || input.VisibleRows > 500 || input.RecognizedComments < 0 || input.RecognizedComments > input.VisibleRows || input.NewComments < 0 || input.NewComments > 1_000_000 || input.LastDetected < 0 || len([]rune(input.LastError)) > 240 {
 		http.Error(w, "El estado del capturador no es válido", http.StatusBadRequest)
 		return
 	}
@@ -1112,11 +1124,14 @@ func (s *workerService) handleCaptureStatus(w http.ResponseWriter, r *http.Reque
 	feed.CaptureAgentConnected = true
 	feed.CommentsPage = input.CommentsPage
 	feed.VisibleRows = input.VisibleRows
+	feed.RecognizedComments = input.RecognizedComments
 	feed.NewComments = input.NewComments
 	feed.LastScanAt = now.Format(time.RFC3339Nano)
 	feed.Connected = true
-	feed.LastError = ""
-	if input.CommentsPage {
+	feed.LastError = strings.Join(strings.Fields(input.LastError), " ")
+	if feed.LastError != "" {
+		feed.State = "capture_warning"
+	} else if input.CommentsPage {
 		feed.State = "comments_page_ready"
 	} else {
 		feed.State = "facebook_open"

@@ -1,6 +1,6 @@
 # Guía de captura de dos directos de Facebook desde Cortex Go
 
-**Estado:** prototipo externo y persistencia SQLite integrados; historial completo en Go. Falta la autenticación manual y validar comentarios reales en la PC donde corre el capturador.  \
+**Estado:** prototipo externo para Brave, conectado al API local; historial completo en Go. El launcher acepta hasta dos URLs, abre un perfil/ventana por cuenta y muestra filas/comentarios reconocidos; falta que el propietario valide login, aislamiento y comentarios nuevos reales en la PC principal.  \
 **Referencia funcional:** el módulo de captura del Cortex anterior.  \
 **Alcance:** reconstrucción desde cero; no migrar ni copiar el código anterior. SocialStream Ninja queda excluido.  \
 **Retención elegida:** nombres y textos se conservan en la base activa hasta borrado manual. Los respaldos locales se pueden revisar y borrar desde Cortex; las copias exportadas a otro lugar deben borrarse por separado.
@@ -28,7 +28,7 @@ Estas observaciones sirven como requisito y comportamiento conocido. No implican
 
 ## Experiencia buscada en el .exe
 
-En una sección **Facebook en vivo**, mostrar dos tarjetas independientes:
+La interfaz final deseada es una sección **Facebook en vivo** con dos tarjetas independientes:
 
 | Cuenta 1 | Cuenta 2 |
 |---|---|
@@ -41,7 +41,7 @@ En una sección **Facebook en vivo**, mostrar dos tarjetas independientes:
 
 La persona pega el enlace que ya usa para el directo. Cortex interpreta el ID cuando el formato es conocido, abre la vista adecuada dentro de la sesión de esa cuenta y verifica que la página esperada haya cargado. Si el enlace no se puede interpretar, muestra qué formato hace falta; no declara la captura activa solo porque abrió una página.
 
-El flujo normal debe ser: abrir Cortex Go, iniciar sesión en cada cuenta solo si venció, pegar los dos enlaces, comprobar que ambas capturas estén vivas y abrir OBS. La notebook solo controla el panel remoto; las sesiones autenticadas y la captura se ejecutan en la PC de escritorio.
+Mientras no exista esa sección dentro de Cortex, el flujo de prueba vigente es abrir Cortex Go, entrar a `experiments/facebook-browser-poc` y ejecutar `go run .`, pegar hasta dos enlaces y autenticar manualmente las ventanas de Brave si hace falta. Una URL vacía omite esa cuenta. El historial marca `Captura activa (n/2)` solo si recibe señal reciente y la página coincide con el directo; al pasar el cursor muestra filas visibles y comentarios reconocidos. La notebook solo controla el panel remoto; las sesiones autenticadas y la captura se ejecutan en la PC de escritorio. Consulta `experiments/facebook-browser-poc/README.md` para el paso a paso.
 
 ## Diseño recomendado para el navegador integrado
 
@@ -100,6 +100,8 @@ Mostrar por separado para cada cuenta:
 - Página desconectada, cargando o con error de captura.
 - Error al guardar en la base.
 
+El capturador externo actual informa `commentsPage`, filas visibles, comentarios reconocidos, nuevos comentarios y errores resumidos. Si deja de informar durante 15 segundos, el historial lo muestra desconectado. La cuenta con error puede recuperarse reiniciando solo el capturador; no hace falta reiniciar Cortex si su API y SQLite siguen respondiendo.
+
 El panel debería mostrar también última exploración del DOM, filas visibles, comentarios detectados, enviados y último error resumido. Son métricas inspiradas en el estado por pestaña del Cortex anterior. No guardar el texto completo ni los datos personales en los logs técnicos.
 
 Si Facebook cambia la página, si una cuenta cierra sesión o si se pierde Internet, reintentar solo esa fuente y dejar visible el último evento recibido. Un problema de Cuenta 1 no debe interrumpir Cuenta 2. Acciones manuales: **Reintentar captura**, **Recargar página de Facebook** y, como último recurso, **Reiniciar Cortex**. No ocultar errores tras reconexiones automáticas.
@@ -157,11 +159,11 @@ La implementación nueva debe recrear la función con la arquitectura elegida pa
 
 ## Estado del prototipo y cierre pendiente
 
-El prototipo de [`experiments/facebook-browser-poc`](../experiments/facebook-browser-poc/README.md) abre Brave por defecto con dos perfiles aislados, guarda las sesiones bajo `%LOCALAPPDATA%` y limita DevTools a `127.0.0.1`. Se conecta a la pestaña Facebook inicial de cada perfil en vez de crear una pestaña en blanco de captura. La persona inicia sesión y abre manualmente Live Producer > Comentarios en cada ventana. La captura establece una línea base, observa cambios del DOM y vuelve a explorar cada cinco segundos; solo intenta enviar comentarios nuevos al API local de Cortex. Edge sigue disponible como alternativa explícita.
+El prototipo de [`experiments/facebook-browser-poc`](../experiments/facebook-browser-poc/README.md) abre únicamente Brave, con una URL y una ventana/perfil por cuenta seleccionada. Se inicia con `go run .` desde esa carpeta; permite pegar las URL y omitir una cuenta dejándola vacía. Las sesiones quedan bajo `%LOCALAPPDATA%` y DevTools se limita a `127.0.0.1`. El capturador abre directamente la ruta validada de Live Producer > Comentarios y permite iniciar sesión manualmente. La captura establece una línea base, observa cambios del DOM y vuelve a explorar cada cinco segundos; solo intenta enviar comentarios nuevos al API local de Cortex. No ofrece Edge como alternativa.
 
 El API guarda origen/cuenta, directo, ID externo cuando está disponible, `participantId` solo si el DOM expone el ID numérico del perfil, nombre, texto, hora original y hora de captura. Deduplica por ID externo o huella. El panel presenta métricas por cuenta y permite borrar comentarios de la base activa uno a uno o todo el historial. Los logs del prototipo no imprimen IDs, nombres ni textos. El `participantId` aún no es una identidad enlazada de Cdelu: la reserva de lotería permanece desactivada hasta comprobar el enlace y el contrato remoto.
 
-Esto todavía no es la experiencia integrada definida en esta guía: Edge/Brave abre ventanas externas, el prototipo no confirma la identidad de la cuenta y la PC de escritorio aún no se ha validado. No se ha confirmado inicio de sesión/2FA, persistencia tras reiniciar, selectores con comentarios reales, captura simultánea, recuperación de errores ni uso durante un directo. CEF y la integración de los navegadores en Cortex siguen pendientes.
+Esto todavía no es la experiencia integrada definida en esta guía: Brave abre ventanas externas y la aplicación no confirma por sí sola qué usuario inició sesión. El extractor ya admite comentarios propios cuyas filas solo presentan la acción **Fijar**; informa filas visibles y comentarios reconocidos y marca desconectada una fuente si pasan 15 segundos sin señal. La captura real de Brave requiere confirmar manualmente el login/2FA, los selectores DOM, los comentarios nuevos, dos cuentas simultáneas y la recuperación. CEF y la integración de las vistas dentro de Cortex siguen pendientes.
 
 El usuario eligió el escritorio como único host principal. La notebook debe actuar como cliente del panel por Tailscale; no aloja los perfiles de Facebook ni una copia activa de SQLite. El escritorio figura desconectado, así que falta desplegar allí el ejecutable actualizado, configurar Tailscale Serve y validar el enlace remoto.
 

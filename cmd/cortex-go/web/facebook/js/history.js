@@ -229,11 +229,23 @@
   function updateCaptureState(status) {
     const pill = $('wsState');
     const feeds = status && Array.isArray(status.feeds) ? status.feeds : [];
-    const active = feeds.some((feed) => feed.captureAgentConnected && feed.commentsPage);
+    const activeFeeds = feeds.filter((feed) => feed.captureAgentConnected && feed.commentsPage);
     const open = feeds.some((feed) => feed.captureAgentConnected);
     const error = feeds.some((feed) => feed.lastError);
-    pill.className = 'chip ' + (active ? 'ok' : error ? 'bad' : 'warn');
-    pill.textContent = active ? 'Captura activa' : error ? 'Revisar capturador' : open ? 'Abre Comentarios' : 'Esperando capturador';
+    pill.className = 'chip ' + (activeFeeds.length ? 'ok' : error ? 'bad' : 'warn');
+    pill.textContent = activeFeeds.length
+      ? 'Captura activa (' + activeFeeds.length + '/' + feeds.length + ')'
+      : error ? 'Revisar capturador' : open ? 'Abre Comentarios' : 'Esperando capturador';
+    pill.title = feeds.map((feed) => {
+      const state = feed.captureAgentConnected
+        ? feed.commentsPage ? 'página de comentarios abierta' : 'abre la URL del directo'
+        : 'sin señal del capturador';
+      return (feed.name || 'Cuenta') + ': ' + state
+        + ' | filas visibles: ' + (feed.visibleRows || 0)
+        + ' | comentarios reconocidos: ' + (feed.recognizedComments || 0)
+        + ' | nuevos: ' + (feed.newComments || 0)
+        + (feed.lastError ? ' | ' + feed.lastError : '');
+    }).join('\n');
   }
 
   async function refreshEvents(options = {}) {

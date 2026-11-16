@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -28,15 +30,17 @@ import (
 )
 
 const (
-	firstDebugPort  = 19221
-	secondDebugPort = 19222
-	bridgeName      = "cortexFacebookProbe"
+	bridgeName = "cortexFacebookProbe"
 )
+
+var facebookCommentsPathPattern = regexp.MustCompile(`(?i)^/live/producer/dashboard/(\d+)/comments/?$`)
 
 type account struct {
 	label    string
 	id       string
 	feedID   string
+	streamID string
+	pageURL  string
 	port     int
 	targetID target.ID
 	proc     *exec.Cmd
@@ -56,12 +60,16 @@ type debuggerTarget struct {
 }
 
 type domProbe struct {
-	Account      string            `json:"account"`
-	CommentsPage bool              `json:"commentsPage"`
-	VisibleRows  int               `json:"visibleRows"`
-	NewComments  int               `json:"newComments"`
-	LastDetected int64             `json:"lastDetected"`
-	Comments     []capturedComment `json:"comments"`
+	Account            string            `json:"account"`
+	PageURL            string            `json:"pageUrl"`
+	StreamID           string            `json:"streamId"`
+	CommentsPage       bool              `json:"commentsPage"`
+	VisibleRows        int               `json:"visibleRows"`
+	RecognizedComments int               `json:"recognizedComments"`
+	NewComments        int               `json:"newComments"`
+	LastDetected       int64             `json:"lastDetected"`
+	LastError          string            `json:"lastError,omitempty"`
+	Comments           []capturedComment `json:"comments"`
 }
 
 type capturedComment struct {
@@ -81,22 +89,47 @@ func main() {
 }
 
 func run(args []string) error {
+	disableConsoleQuickEdit()
 	flags := flag.NewFlagSet("facebook-browser-poc", flag.ContinueOnError)
-	browserChoice := flags.String("browser", "brave", "navegador instalado: brave o edge")
-	accountChoice := flags.Int("account", 0, "cuenta a abrir: 1 o 2; 0 abre ambas")
+	accountChoice := flags.Int("account", 0, "cuenta a abrir: 1 o 2; 0 abre todas las URLs configuradas")
+	url1 := flags.String("url1", "", "URL del Live Producer para Cuenta 1")
+	url2 := flags.String("url2", "", "URL del Live Producer para Cuenta 2")
 	cortexURL := flags.String("cortex-url", "http://127.0.0.1:17845", "URL local del panel Cortex Go")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if *accountChoice < 0 || *accountChoice > 2 {
-		return errors.New("-account debe ser 1, 2 o 0 para abrir ambas")
+		return errors.New("-account debe ser 1, 2 o 0 para abrir todas las URLs configuradas")
 	}
 	if err := validateCortexURL(*cortexURL); err != nil {
 		return err
 	}
-
-	choice := strings.ToLower(strings.TrimSpace(*browserChoice))
-	browserPath, err := findBrowser(choice)
+	if strings.TrimSpace(*url1) == "" && strings.TrimSpace(*url2) == "" {
+		var err error
+		*url1, *url2, err = promptLiveURLs()
+		if err != nil {
+			return err
+		}
+	}
+	accounts, err := requestedAccounts(*url1, *url2)
+	if err != nil {
+		return err
+	}
+	if *accountChoice != 0 {
+		selectedID := fmt.Sprintf("cuenta-%d", *accountChoice)
+		selected := make([]*account, 0, 1)
+		for _, a := range accounts {
+			if a.id == selectedID {
+				selected = append(selected, a)
+				break
+			}
+		}
+		if len(selected) == 0 {
+			return fmt.Errorf("no configuraste una URL para Cuenta %d", *accountChoice)
+		}
+		accounts = selected
+	}
+	browserPath, err := findBrave()
 	if err != nil {
 		return err
 	}
@@ -104,7 +137,7 @@ func run(args []string) error {
 	if localData == "" {
 		return errors.New("Windows no definió LOCALAPPDATA; no se crearán perfiles dentro del repositorio")
 	}
-	profileRoot := filepath.Join(localData, "CortexGo", "FacebookBrowserPoC")
+	profileRoot := filepath.Join(localData, "CortexGo", "FacebookBrowserPoC", "brave")
 	if err := os.MkdirAll(profileRoot, 0o700); err != nil {
 		return fmt.Errorf("no se pudo preparar el almacenamiento privado local: %w", err)
 	}
@@ -112,22 +145,13 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	accounts := []*account{
-		{label: "Cuenta 1", id: "cuenta-1", feedID: "a", port: firstDebugPort},
-		{label: "Cuenta 2", id: "cuenta-2", feedID: "b", port: secondDebugPort},
-	}
-	if *accountChoice != 0 {
-		accounts = accounts[*accountChoice-1 : *accountChoice]
-	}
-
-	browserLabel := "Brave"
-	if choice == "edge" {
-		browserLabel = "Edge"
-	}
-	fmt.Printf("Prueba técnica de %d sesión(es) Facebook con perfiles aislados en %s\n", len(accounts), browserLabel)
+	fmt.Printf("Captura de Facebook en Brave: %d cuenta(s), un perfil y una pestaña por cada URL.\n", len(accounts))
 	fmt.Println("El navegador conserva las cookies en LOCALAPPDATA, fuera del repositorio.")
-	fmt.Println("Cada perfil abre una sola pestaña observada en Facebook; inicia sesión y abre Live Producer > Comentarios.")
-	fmt.Println("Solo envía comentarios nuevos a la base local de Cortex Go; no imprime nombres ni textos en la consola.")
+	fmt.Println("Cada perfil abre una sola pestaña de Live Producer; inicia sesión en la cuenta correcta.")
+	fmt.Println("Solo envía comentarios nuevos a Cortex Go; no imprime nombres ni textos en la consola.")
+	for _, a := range accounts {
+		fmt.Printf("%s: directo %s\n", a.label, a.streamID)
+	}
 	if len(accounts) == 1 {
 		fmt.Printf("Solo se abrirá %s. Cierra con Ctrl+C para cerrar el navegador de forma ordenada.\n", accounts[0].label)
 	} else {
@@ -150,6 +174,49 @@ func run(args []string) error {
 	return nil
 }
 
+func promptLiveURLs() (string, string, error) {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("Pega la URL de Comentarios de Live Producer para cada cuenta. Deja una vacía si no la vas a usar.")
+	fmt.Print("URL Cuenta 1: ")
+	first, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", "", errors.New("no se pudieron leer las URL de Facebook")
+	}
+	fmt.Print("URL Cuenta 2: ")
+	second, secondErr := reader.ReadString('\n')
+	if secondErr != nil && !errors.Is(secondErr, io.EOF) {
+		return "", "", errors.New("no se pudieron leer las URL de Facebook")
+	}
+	return strings.TrimSpace(first), strings.TrimSpace(second), nil
+}
+
+func requestedAccounts(firstURL, secondURL string) ([]*account, error) {
+	inputs := []struct {
+		label, id, feedID, rawURL string
+	}{
+		{label: "Cuenta 1", id: "cuenta-1", feedID: "a", rawURL: firstURL},
+		{label: "Cuenta 2", id: "cuenta-2", feedID: "b", rawURL: secondURL},
+	}
+	accounts := make([]*account, 0, len(inputs))
+	for _, input := range inputs {
+		if strings.TrimSpace(input.rawURL) == "" {
+			continue
+		}
+		pageURL, streamID, err := validateFacebookCommentsURL(input.rawURL)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", input.label, err)
+		}
+		accounts = append(accounts, &account{
+			label: input.label, id: input.id, feedID: input.feedID,
+			streamID: streamID, pageURL: pageURL,
+		})
+	}
+	if len(accounts) == 0 {
+		return nil, errors.New("pega al menos una URL de Comentarios de Live Producer")
+	}
+	return accounts, nil
+}
+
 func validateCortexURL(raw string) error {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Scheme != "http" || u.User != nil || u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.Fragment != "" {
@@ -162,23 +229,45 @@ func validateCortexURL(raw string) error {
 	return nil
 }
 
-func findBrowser(choice string) (string, error) {
-	var candidates []string
-	switch choice {
-	case "edge":
-		candidates = []string{
-			filepath.Join(os.Getenv("PROGRAMFILES(X86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
-			filepath.Join(os.Getenv("PROGRAMFILES"), "Microsoft", "Edge", "Application", "msedge.exe"),
-			filepath.Join(os.Getenv("LOCALAPPDATA"), "Microsoft", "Edge", "Application", "msedge.exe"),
-		}
-	case "brave":
-		candidates = []string{
-			filepath.Join(os.Getenv("PROGRAMFILES"), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
-			filepath.Join(os.Getenv("PROGRAMFILES(X86)"), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
-			filepath.Join(os.Getenv("LOCALAPPDATA"), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
-		}
-	default:
-		return "", fmt.Errorf("navegador desconocido %q; usa -browser edge o -browser brave", choice)
+func validateFacebookCommentsURL(raw string) (string, string, error) {
+	raw = strings.TrimSpace(raw)
+	if len(raw) > 2048 {
+		return "", "", errors.New("la URL supera el tamaño permitido")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(u.Scheme, "https") || u.User != nil {
+		return "", "", errors.New("usa una URL HTTPS de Facebook Live Producer")
+	}
+	host := strings.ToLower(u.Hostname())
+	if host != "facebook.com" && host != "www.facebook.com" {
+		return "", "", errors.New("la URL debe pertenecer a facebook.com")
+	}
+	match := facebookCommentsPathPattern.FindStringSubmatch(u.Path)
+	if len(match) != 2 {
+		return "", "", errors.New("usa la ruta /live/producer/dashboard/ID/COMMENTS/")
+	}
+	streamID := match[1]
+	return "https://www.facebook.com/live/producer/dashboard/" + streamID + "/COMMENTS/", streamID, nil
+}
+
+func isFacebookCommentsURL(raw, streamID string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || !strings.EqualFold(u.Scheme, "https") || u.User != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host != "facebook.com" && host != "www.facebook.com" {
+		return false
+	}
+	match := facebookCommentsPathPattern.FindStringSubmatch(u.Path)
+	return len(match) == 2 && match[1] == streamID
+}
+
+func findBrave() (string, error) {
+	candidates := []string{
+		filepath.Join(os.Getenv("PROGRAMFILES"), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+		filepath.Join(os.Getenv("PROGRAMFILES(X86)"), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+		filepath.Join(os.Getenv("LOCALAPPDATA"), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
 	}
 	for _, candidate := range candidates {
 		if candidate == "" {
@@ -188,13 +277,15 @@ func findBrowser(choice string) (string, error) {
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("no encontré %s instalado; usa -browser edge o -browser brave", choice)
+	return "", errors.New("no se encontró Brave en las rutas de instalación habituales")
 }
 
 func launch(ctx context.Context, browserPath, profileRoot string, a *account) error {
-	if err := ensurePortFree(a.port); err != nil {
-		return fmt.Errorf("el puerto local %d ya está ocupado; cierra la prueba anterior y vuelve a intentarlo", a.port)
+	port, err := freeDebugPort()
+	if err != nil {
+		return fmt.Errorf("no se pudo reservar un puerto local para %s", a.label)
 	}
+	a.port = port
 	profileDir := filepath.Join(profileRoot, a.id)
 	if err := os.MkdirAll(profileDir, 0o700); err != nil {
 		return fmt.Errorf("no se pudo preparar el perfil de %s: %w", a.label, err)
@@ -207,7 +298,7 @@ func launch(ctx context.Context, browserPath, profileRoot string, a *account) er
 		"--new-window",
 		"--no-first-run",
 		"--no-default-browser-check",
-		"https://www.facebook.com/",
+		a.pageURL,
 	)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("no se pudo abrir %s: %w", a.label, err)
@@ -219,7 +310,7 @@ func launch(ctx context.Context, browserPath, profileRoot string, a *account) er
 		return fmt.Errorf("no se pudo conectar con %s: %w", a.label, err)
 	}
 	a.debugURL = debugURL
-	targetID, err := waitForFacebookTarget(ctx, a.port, 10*time.Second)
+	targetID, err := waitForFacebookTarget(ctx, a.port, 15*time.Second)
 	if err != nil {
 		return fmt.Errorf("no se encontró la pestaña inicial de Facebook para %s: %w", a.label, err)
 	}
@@ -227,12 +318,16 @@ func launch(ctx context.Context, browserPath, profileRoot string, a *account) er
 	return nil
 }
 
-func ensurePortFree(port int) error {
-	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+func freeDebugPort() (int, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return listener.Close()
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		return 0, err
+	}
+	return port, nil
 }
 
 func connectAndObserve(parent context.Context, a *account, cortexURL string) error {
@@ -248,17 +343,23 @@ func connectAndObserve(parent context.Context, a *account, cortexURL string) err
 		if err := json.Unmarshal([]byte(payload), &probe); err != nil || probe.Account != a.id {
 			return chromedp.Void{}, nil
 		}
-		pageURL, err := chromedp.Run(ctx, chromedp.Location())
-		if err != nil || !isFacebookURL(pageURL) {
+		if !isFacebookURL(probe.PageURL) {
 			return chromedp.Void{}, nil
+		}
+		if probe.CommentsPage && (probe.StreamID != a.streamID || !isFacebookCommentsURL(probe.PageURL, a.streamID)) {
+			probe.CommentsPage = false
+			probe.LastError = "La página abierta no coincide con la URL de esta cuenta."
+			probe.Comments = nil
 		}
 		if err := postCaptureStatus(parent, cortexURL, a, probe); err != nil {
 			fmt.Printf("[%s] No se pudo actualizar el estado de captura.\n", a.label)
 		}
+		captureError := probe.LastError
 		for _, comment := range probe.Comments {
 			saved, err := postCapturedComment(parent, cortexURL, a, comment)
 			if err != nil {
 				fmt.Printf("[%s] No se pudo guardar un comentario (error de conexión o respuesta del panel).\n", a.label)
+				captureError = "Cortex no pudo guardar un comentario; revisa el estado del servicio."
 				continue
 			}
 			if saved {
@@ -266,6 +367,12 @@ func connectAndObserve(parent context.Context, a *account, cortexURL string) err
 				fmt.Printf("[%s] Comentario nuevo guardado; total de esta sesión: %d.\n", a.label, a.saved)
 			} else {
 				fmt.Printf("[%s] Comentario repetido descartado por deduplicación.\n", a.label)
+			}
+		}
+		if captureError != probe.LastError {
+			probe.LastError = captureError
+			if err := postCaptureStatus(parent, cortexURL, a, probe); err != nil {
+				fmt.Printf("[%s] No se pudo informar el error de guardado.\n", a.label)
 			}
 		}
 		printProbe(a.label, probe)
@@ -327,10 +434,12 @@ func postCapturedComment(parent context.Context, cortexURL string, a *account, c
 
 func postCaptureStatus(parent context.Context, cortexURL string, a *account, probe domProbe) error {
 	body, err := json.Marshal(map[string]any{
-		"commentsPage": probe.CommentsPage,
-		"visibleRows":  probe.VisibleRows,
-		"newComments":  probe.NewComments,
-		"lastDetected": probe.LastDetected,
+		"commentsPage":       probe.CommentsPage,
+		"visibleRows":        probe.VisibleRows,
+		"recognizedComments": probe.RecognizedComments,
+		"newComments":        probe.NewComments,
+		"lastDetected":       probe.LastDetected,
+		"lastError":          probe.LastError,
 	})
 	if err != nil {
 		return err
@@ -420,7 +529,7 @@ func waitForFacebookTarget(parent context.Context, port int, timeout time.Durati
 		case <-parent.Done():
 			return "", parent.Err()
 		case <-deadline.C:
-			return "", errors.New("Brave no publicó una pestaña Facebook por DevTools local")
+			return "", errors.New("Brave no abrió una pestaña de Facebook por DevTools local")
 		case <-ticker.C:
 		}
 	}
@@ -433,7 +542,7 @@ func observerScript(accountID string) string {
   const windowLabel = account === 'cuenta-1' ? 'Cortex Go — Cuenta 1' : 'Cortex Go — Cuenta 2';
   const marker = '__cortexFacebookProbe_' + account;
   if (window[marker]) return true;
-  const state = { route: '', seen: new Set(), baseline: true, newComments: 0, lastDetected: 0, timer: 0, lastReportAt: 0, lastReportSignature: '' };
+  const state = { route: '', seen: new Set(), baseline: true, newComments: 0, recognizedComments: 0, lastDetected: 0, lastError: '', unrecognizedScans: 0, timer: 0, lastReportAt: 0, lastReportSignature: '' };
   window[marker] = state;
   const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
   const hash = value => {
@@ -450,27 +559,40 @@ func observerScript(accountID string) string {
       .filter(node => node.getClientRects().length && normalize(node.innerText || node.textContent))
       .slice(-500);
   }
-  function keyFor(row) {
-    const links = [...row.querySelectorAll('a[href]')].map(node => node.href);
-    const commentLink = links.find(href => /comment_id=|reply_comment_id=|\/comment\//i.test(href));
-    if (commentLink) return 'id:' + commentLink;
-    return 'text:' + hash(normalize(row.innerText || row.textContent));
+  function keyFor(row, comment) {
+    if (comment.externalId) return 'id:' + comment.streamId + ':' + comment.externalId;
+    const dataId = row.getAttribute('data-id') || row.id || '';
+    if (/^[0-9_]{6,}$/.test(dataId)) return 'id:' + comment.streamId + ':' + dataId;
+    return 'text:' + hash([
+      comment.streamId,
+      comment.participantId || comment.author.toLowerCase(),
+      comment.author.toLowerCase(),
+      comment.message,
+      comment.eventAt || ''
+    ].join('\u0000'));
   }
   function report(visibleRows, comments = []) {
     try {
       const bridge = window.` + bridgeName + `;
       if (typeof bridge !== 'function') return;
-      const signature = [isCommentsPage(), visibleRows, state.newComments, state.lastDetected].join(':');
+      const streamId = location.pathname.match(/\/live\/producer\/dashboard\/(\d+)\/comments(?:\/|$)/i)?.[1] || '';
+      const signature = [isCommentsPage(), visibleRows, state.recognizedComments, state.newComments, state.lastDetected, state.lastError].join(':');
       const now = Date.now();
       if (signature === state.lastReportSignature && now - state.lastReportAt < 5000) return;
       state.lastReportSignature = signature;
       state.lastReportAt = now;
       bridge(JSON.stringify({
         account,
+        pageUrl: isCommentsPage()
+          ? 'https://www.facebook.com/live/producer/dashboard/' + streamId + '/COMMENTS/'
+          : (isFacebookHost ? location.origin + location.pathname : ''),
+        streamId,
         commentsPage: isCommentsPage(),
         visibleRows,
+        recognizedComments: state.recognizedComments,
         newComments: state.newComments,
         lastDetected: state.lastDetected,
+        lastError: state.lastError,
         comments
       }));
     } catch (_) {}
@@ -489,29 +611,40 @@ func observerScript(accountID string) string {
     }
     const visible = rows();
     const freshComments = [];
+    let recognizedComments = 0;
     if (state.route) {
       for (const row of visible) {
-        const key = keyFor(row);
+        const comment = extractComment(row);
+        if (!comment) continue;
+        recognizedComments += 1;
+        const key = keyFor(row, comment);
         if (state.seen.has(key)) continue;
         state.seen.add(key);
         if (!state.baseline) {
           state.newComments += 1;
           state.lastDetected = Date.now();
-          const comment = extractComment(row);
-          if (comment) freshComments.push(comment);
+          freshComments.push(comment);
         }
         if (state.seen.size > 5000) state.seen.delete(state.seen.values().next().value);
       }
+    }
+    state.recognizedComments = recognizedComments;
+    if (state.route && visible.length > 0 && recognizedComments === 0) {
+      state.unrecognizedScans += 1;
+      if (state.unrecognizedScans >= 3) state.lastError = 'Facebook muestra filas, pero no se pudo extraer autor y texto.';
+    } else if (recognizedComments > 0) {
+      state.unrecognizedScans = 0;
+      state.lastError = '';
     }
     report(visible.length, freshComments);
   }
   function extractComment(row) {
     const streamId = location.pathname.match(/\/live\/producer\/dashboard\/(\d+)\/comments(?:\/|$)/i)?.[1] || '';
     if (!streamId) return null;
-    const rowText = normalize(row.innerText || row.textContent);
     const aria = normalize(row.getAttribute('aria-label'));
-    if (!/(comment|comentario|reply|responder|respuesta)/i.test(aria + ' ' + rowText)) return null;
-    const isActionOrTime = value => /^(?:like|reply|responder|respuesta|me gusta|share|compartir|see translation|ver traducci[oó]n|hide|ocultar|send|enviar|\d+\s*(?:s|sec|min|m|h|d|w|sem|day|days|week|weeks|hora|horas|d[ií]a|d[ií]as)(?:\s+ago|\s+atr[aá]s)?|\d{1,2}:\d{2})$/i.test(value);
+    // This selector only runs on Live Producer's comments route. Own comments
+    // may show "Fijar" and omit the "Responder/Comentario" labels.
+    const isActionOrTime = value => /^(?:like|reply|responder|respuesta|me gusta|share|compartir|see translation|ver traducci[oó]n|hide|ocultar|send|enviar|pin|fijar|edit|editar|more|m[aá]s|\d+\s*(?:s|sec|min|m|h|d|w|sem|day|days|week|weeks|hora|horas|d[ií]a|d[ií]as)(?:\s+ago|\s+atr[aá]s)?|\d{1,2}:\d{2})$/i.test(value);
     const anchors = [...row.querySelectorAll('a[href]')].map(anchor => ({
       name: normalize(anchor.innerText || anchor.getAttribute('aria-label')),
       href: anchor.href,
@@ -525,7 +658,10 @@ func observerScript(accountID string) string {
     });
     const author = anchors.find(item => item.hasImage) || anchors[0] || null;
     const labelName = aria.match(/^(?:comment|comentario)(?:\s+(?:from|by|de|por))\s+(.+)$/i)?.[1] || '';
-    const authorName = author?.name || normalize(labelName);
+    const fallbackName = [...row.querySelectorAll('[dir="auto"]')]
+      .map(node => normalize(node.innerText || node.textContent))
+      .find(value => value && value.length <= 100 && !isActionOrTime(value));
+    const authorName = author?.name || normalize(labelName) || fallbackName || '';
     if (!authorName || isActionOrTime(authorName)) return null;
     function stableParticipantID(rawURL) {
       if (!rawURL) return '';
@@ -540,7 +676,11 @@ func observerScript(accountID string) string {
     const participantId = stableParticipantID(author?.href || '');
     const directText = [...row.querySelectorAll('[dir="auto"]')]
       .filter(node => node.getClientRects().length && !node.querySelector('[dir="auto"]'))
-      .map(node => normalize(node.innerText || node.textContent))
+      .map(node => {
+        const clone = node.cloneNode(true);
+        clone.querySelectorAll('img[alt]').forEach(img => img.replaceWith(document.createTextNode(img.getAttribute('alt') || '')));
+        return normalize(clone.textContent || node.innerText || node.textContent);
+      })
       .filter(value => value && value !== authorName && value.length <= 3500 && !isActionOrTime(value));
     const message = directText.sort((left, right) => right.length - left.length)[0] || '';
     if (!message || message.length > 3500) return null;
@@ -555,7 +695,15 @@ func observerScript(accountID string) string {
       const dataId = row.getAttribute('data-id') || row.id || '';
       if (/^[0-9_]{6,}$/.test(dataId)) externalId = dataId;
     }
-    return { externalId, participantId, streamId, author: authorName, message, eventAt: '' };
+    let eventAt = '';
+    const timeNode = row.querySelector('[data-utime], time[datetime], abbr[title]');
+    if (timeNode) {
+      const epoch = Number(timeNode.getAttribute('data-utime'));
+      const parsed = Date.parse(timeNode.getAttribute('datetime') || timeNode.getAttribute('title') || '');
+      const milliseconds = Number.isFinite(epoch) && epoch > 0 ? (epoch < 1e12 ? epoch * 1000 : epoch) : parsed;
+      if (Number.isFinite(milliseconds) && milliseconds > 0) eventAt = new Date(milliseconds).toISOString();
+    }
+    return { externalId, participantId, streamId, author: authorName, message, eventAt };
   }
   function schedule() {
     if (!state.timer) state.timer = setTimeout(scan, 500);
@@ -577,8 +725,12 @@ func printProbe(label string, probe domProbe) {
 	if probe.LastDetected > 0 {
 		last = time.UnixMilli(probe.LastDetected).Local().Format("15:04:05")
 	}
-	fmt.Printf("[%s] %s | filas visibles: %d | nuevos: %d | último: %s\n",
-		label, status, probe.VisibleRows, probe.NewComments, last)
+	fmt.Printf("[%s] %s | filas: %d | reconocidas: %d | guardadas en sesión: %d | último: %s",
+		label, status, probe.VisibleRows, probe.RecognizedComments, probe.NewComments, last)
+	if probe.LastError != "" {
+		fmt.Printf(" | aviso: %s", probe.LastError)
+	}
+	fmt.Println()
 }
 
 func closeAccounts(accounts []*account) {

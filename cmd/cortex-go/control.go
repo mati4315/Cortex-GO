@@ -475,8 +475,15 @@ func (c *controlServer) proxy(w http.ResponseWriter, r *http.Request) {
 	client := c.client
 	if r.URL.Path == "/api/backup" || r.URL.Path == "/api/restore" || r.URL.Path == "/api/events/export.csv" || strings.HasPrefix(r.URL.Path, "/api/event-archives") || strings.HasPrefix(r.URL.Path, "/api/modules/welcome/upload/") {
 		client = &http.Client{Timeout: 2 * time.Minute}
-	} else if r.URL.Path == "/api/modules/spotify/callback" || r.URL.Path == "/api/modules/spotify/current" ||
-		r.URL.Path == "/api/modules/spotify/search" || r.URL.Path == "/api/modules/rulo/lab/simulate" ||
+	} else if r.URL.Path == "/api/modules/spotify/callback" {
+		client = &http.Client{
+			Timeout: 35 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+	} else if r.URL.Path == "/api/modules/spotify/current" || r.URL.Path == "/api/modules/spotify/search" ||
+		r.URL.Path == "/api/modules/rulo/lab/simulate" ||
 		r.URL.Path == "/api/modules/rulo/lab/compare-rule" {
 		client = &http.Client{Timeout: 15 * time.Second}
 	} else if strings.HasPrefix(r.URL.Path, "/api/modules/welcome/assets/") {

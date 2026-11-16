@@ -1,6 +1,6 @@
 # Módulo Historial de Facebook
 
-**Estado:** historial, overlay y una consulta agregada administrativa integrados en Cortex Go. La captura real todavía depende de iniciar sesión manualmente y abrir la vista de comentarios en los perfiles de Facebook; la composición final sigue pendiente de aceptación en una escena real de OBS. Las estadísticas públicas contestadas por Rulo no están habilitadas.
+**Estado:** historial y overlay integrados en Cortex Go; consulta agregada administrativa disponible para el Laboratorio. La captura de Facebook sigue siendo un prototipo externo de Brave. Usa hasta dos perfiles separados, informa filas/comentarios reconocidos y requiere autenticación manual y un comentario nuevo real para su aceptación. La composición final del overlay sigue pendiente de revisión en una escena real de OBS. Las estadísticas públicas contestadas por Rulo no están habilitadas.
 
 ## Análisis de la referencia
 
@@ -34,6 +34,7 @@ La portada enlaza al historial completo y al overlay OBS. Las rutas sirven recur
 - Filtra por fecha local del navegador y por ID exacto de transmisión; puede combinarse con la cuenta y búsqueda de texto.
 - Actualiza automáticamente cada cinco segundos. Si estás leyendo comentarios anteriores o más abajo en la lista, muestra un aviso con el número de comentarios nuevos y conserva tu posición.
 - Muestra el estado observado del capturador, hora original del comentario, hora de recepción, cuenta y transmisión.
+- El indicador de captura distingue capturador ausente, Facebook fuera de la vista Comentarios, captura activa y avisos de extracción/conexión. Al pasar el cursor muestra por cuenta las filas visibles y comentarios reconocidos. Si Cortex no recibe señal durante 15 segundos, deja de mostrarla como activa.
 - Guarda el resultado actual por número de programa, muestra la lista y permite volver a abrir o borrar cada copia.
 - Permite borrar un comentario individual y vaciar el historial con confirmación en dos pasos.
 - Permite destacar un comentario activo haciendo clic o enfocando su tarjeta y pulsando Enter/Espacio; el historial muestra el envío y marca el comentario seleccionado.
@@ -60,10 +61,12 @@ El historial activo usa la tabla `events` y los mismos endpoints SQLite de captu
 Las respuestas de Rulo aparecen debajo del comentario que las originó en el historial activo, enlazadas por `eventId`. El overlay combinado usa la misma conexión SSE y recupera el estado vigente al reconectar; una actualización tardía muestra una notificación breve con el resultado nuevo. Silenciar la presentación desde el laboratorio no borra ni oculta las respuestas en el historial. Este adaptador no publica comentarios en Facebook.
 
 1. Inicia Cortex Go en la computadora donde se ejecutan los perfiles de Facebook.
-2. Abre una de las rutas del historial desde esa computadora o mediante la URL privada de Tailscale del host.
-3. Revisa que el estado indique **Captura activa**; para empezar a recibir mensajes, la ventana observada debe mostrar Comentarios del Live Producer.
-4. Usa búsqueda, cuenta, fechas, ID de transmisión y páginas para encontrar comentarios anteriores. La retención activa continúa hasta que el operador borre los comentarios.
-5. Si estás viendo comentarios antiguos, el aviso flotante indica cuántos nuevos llegaron. Pulsa el aviso cuando quieras regresar a los más recientes.
-6. Para conservar una sesión aparte, elige **Guardar chat actual** e indica el número del programa. Los filtros activos limitan qué comentarios entran en esa copia.
+2. Desde `experiments/facebook-browser-poc`, ejecuta `go run .`, pega la URL de Comentarios de Live Producer para cada cuenta y deja vacía la que no usarás. Se abre una sola ventana con un perfil separado por cada URL. Los enlaces se validan como HTTPS de Facebook con ID numérico del directo.
+3. Inicia sesión manualmente en cada perfil de Brave y deja abierta la vista Comentarios del directo. El historial establece una línea base al conectarse: para probar, publica un comentario nuevo después de ver la captura activa. Las filas visibles y reconocidas ayudan a separar un selector DOM que dejó de encajar de un problema de conexión.
+4. Abre una de las rutas del historial desde esa computadora o mediante la URL privada de Tailscale del host.
+5. Revisa que el estado indique **Captura activa** y que el comentario nuevo aparezca en el historial. La captura solo informa los comentarios que Facebook cargó en esa sesión.
+6. Usa búsqueda, cuenta, fechas, ID de transmisión y páginas para encontrar comentarios anteriores. La retención activa continúa hasta que el operador borre los comentarios.
+7. Si estás viendo comentarios antiguos, el aviso flotante indica cuántos nuevos llegaron. Pulsa el aviso cuando quieras regresar a los más recientes.
+8. Para conservar una sesión aparte, elige **Guardar chat actual** e indica el número del programa. Los filtros activos limitan qué comentarios entran en esa copia.
 
-La pantalla y el overlay no confirman que Facebook haya entregado todos los comentarios; reflejan solo los que la sesión cargó y el detector envió. Las acciones de respuesta/destacar del bot, avatares personales y los controles de Spotify/OBS dependen de servicios del Cortex anterior que todavía no existen en Go. La aceptación de login y comentarios reales requiere probarla en la computadora del capturador. La URL del overlay y su conexión SSE están implementadas, pero todavía falta revisar tamaño, escala y legibilidad con la escena y resolución reales de OBS.
+La pantalla y el overlay no confirman que Facebook haya entregado todos los comentarios; reflejan solo los que la sesión cargó y el detector envió. Las acciones de respuesta/destacar del bot, avatares personales y los controles de Spotify/OBS dependen de servicios del Cortex anterior que todavía no existen en Go. La captura DOM requiere revisar una cuenta autenticada y un comentario nuevo. La URL del overlay y su conexión SSE están implementadas, pero todavía falta revisar tamaño, escala y legibilidad con la escena y resolución reales de OBS.
